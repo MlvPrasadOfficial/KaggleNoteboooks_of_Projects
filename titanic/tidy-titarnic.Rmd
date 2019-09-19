@@ -1,0 +1,1956 @@
+---
+title: 'Tidy TitaRnic'
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: cosmo
+    highlight: tango
+---
+
+
+
+# Introduction
+
+This is an *R* approach to the Titanic Exploratory Data Analysis and modelling using the *tidyverse* packages. In a first step, I will focus on visualisations of the various features and their (inter-related) properties. Later, I will explore the usage of different classifiers.
+
+I'm mainly using *dplyr* for data manipulation and *ggplot2* for visualisation. Since I'm new to both packages I will add some explanations on how they work; being in the process of learning these tools myself and therefore (hopefully) understanding which parts are less intuitive. 
+
+The script was heavily inspired by the great works of [Megan Risdal](https://www.kaggle.com/mrisdal/exploring-survival-on-the-titanic/) and others, which I will reference here as the script evolves.
+
+Note: If you're more interested in *Python* then you might find my [Pytanic](https://www.kaggle.com/headsortails/pytanic/) kernel useful.
+
+
+## Load libraries, functions, and data files
+
+I suggest to load all the necessary packages at the top of the script, so that you can keep an overview of what you need:
+
+```{r, message = FALSE, warning = FALSE}
+# vis
+library('ggplot2') # visualization
+library('ggthemes') # visualization
+library('ggridges') # visualization
+library('ggforce') # visualization
+library('ggExtra') # visualization
+library('GGally') # visualisation
+library('scales') # visualization
+library('grid') # visualisation
+library('gridExtra') # visualisation
+library('corrplot') # visualisation
+library('ggalluvial') # visualisation
+library('VIM') # missing values
+#suppressPackageStartupMessages(library(heatmaply)) # visualisation
+
+# wrangle
+library('dplyr') # data manipulation
+library('tidyr') # data manipulation
+library('readr') # data input
+library('stringr') # string manipulation
+library('forcats') # factor manipulation
+library('modelr') # factor manipulation
+
+# model
+library('randomForest') # classification
+library('xgboost') # classification
+library('ROCR') # model validation
+```
+
+We use the *multiplot* function, courtesy of [R Cookbooks](http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/) to create multi-panel plots.
+
+```{r, echo=FALSE}
+# Define multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+We also define a helper function to compute 95% binomial confidence limits:
+
+```{r message=FALSE, echo=FALSE}
+# function to extract binomial confidence levels
+get_binCI <- function(x,n) as.list(setNames(binom.test(x,n)$conf.int, c("lwr", "upr")))
+```
+
+
+Load the data:
+
+```{r, message=FALSE, warning=FALSE}
+train <- read_csv('../input/train.csv')
+test  <- read_csv('../input/test.csv')
+```
+
+We are using *readr*'s *read\_csv* function to read in the data sets, instead of the default *read.csv*. This helps to make our data work a bit better with *dplyr* and friends (and computes a bit faster, although not as fast as *fread* which you want to use for really large files.)
+
+```{r, message=FALSE, warning=FALSE, comment=FALSE}
+train <- train %>% mutate(
+  Survived = factor(Survived),
+  Pclass = factor(Pclass),
+  Embarked = factor(Embarked),
+  Sex = factor(Sex)
+)
+
+test <- test %>% mutate(
+  Pclass = factor(Pclass),
+  Embarked = factor(Embarked),
+  Sex = factor(Sex)
+)
+
+combine  <- bind_rows(train, test) # bind training & test data
+```
+
+Ironically, (since one of the things *dplyr* is good at is *not* to convert strings to factors automatically but to store them as characters) we decide to convert *Sex*, *Pclass*, *Embarked*, and *Survived* to factors. This better represents the different levels that the values of these features take. (We do this transformation using *mutate* and the pipe \%\>\%, both of which we will discuss in more detail below.)
+
+We then combine the *train* and *test* data sets in case we want to have a closer look at the overall distributions.
+
+
+
+## Data overview
+
+```{r, message=FALSE, warning=FALSE}
+summary(combine)
+```
+
+The *summary* function gives us an overview over the different feature columns, their type (character, numerical) and basic distribution information. We also see that the features *Age*, *Fare*, and *Embarked* have missing values, and that there is a large range in *Fare*. Naturally, *Survived* is missing for all test data rows. (Here we would not see if there are missing values in some of the character features.)
+
+```{r}
+glimpse(combine)
+```
+
+
+The aptly named *dplyr* function *glimpse* allows us to get a quick impression of the data we are dealing with. Together, *summary* and *glimpse* are an effective first exploration step which gives us the following information:
+
+Together with the *PassengerId* which is just a running index and the indication whether this passenger survived (1) or not (0) we have the following information for each person:
+
+
+- *Pclass* is the Ticket-class: first (1), second (2), and third (3) class tickets were used. We turned it into a factor.
+
+- *Name* is the name of the passenger. The names also contain titles and some persons might share the same surname; indicating family relations. We know that some titles can indicate a certain age group. For instance *Master* is a boy while *Mr* is a man. This feature is a character string of variable length but similar format.
+
+- *Sex* is an indicator whether the passenger was female or male. This is another factor we created from a categorical text string.
+
+- *Age* is the integer age of the passenger. There are NaN values in this column.
+
+- *SibSp* is another ordinal integer feature describing the number of siblings or spouses travelling with each passenger.
+
+- *Parch* is another ordinal integer features that gives the number of parents or children travelling with each passenger.
+
+- *Ticket* is a character string of variable length that gives the ticket number.
+
+- *Fare* is a float feature showing how much each passenger paid for their rather memorable journey.
+
+- *Cabin* gives the cabin number of each passenger. This is another string feature.
+
+- *Embarked* shows the port of embarkation as a categorical factor.
+
+In summary we have 1 floating point feature (*Fare*), 1 integer variable (*Age*), 2 ordinal integer features (*SibSp, Parch*), 3 categorical factors (*Sex, Pclass, Embarked*), and 3 text string features (*Ticket, Cabin, Name*).
+
+The factor encoding immediately allows us to see that the testing data set has 418 rows (NAs in *Survived*), that there were almost twice as many male passengers than female ones, and that only about 40\% of passengers survived. The latter can also be extracted as follows:
+
+```{r}
+train %>%
+  count(Survived)
+```
+
+Here we also have the pipe, which uses the symbol \%\>\%. The simplest way of thinking about this powerful tool is that it passes the *output* of one operation as an *input* to the next one. It's a bit similar to the "." in python/pandas and even more similar to the pipe "\|" in unix shell scripting; in case this helps anyone. The pipe allows you to build your code in a modular way that is easy to extend and to adjust to different applications.
+
+The next code block is simply extracting the numbers for survivals and non survivals for the example afterwards:
+
+```{r}
+surv <- train %>% count(Survived) %>% filter(Survived == 1) %>% .$n
+nosurv <- train %>% count(Survived) %>% filter(Survived == 0) %>% .$n
+```
+
+Now we will see how R code can be directly include in the markdown text: `` `r '\x60r surv/(surv+nosurv)*100\x60'` ``. This allows us to insert simple calculations in the narrative flow, such as the fact that `r sprintf("%.1f", surv/(surv+nosurv)*100)` percent of passengers survived the disaster.
+
+
+## More about missing values
+
+Knowing about missing values is important because they indicate how much we don't know about our data.  Making inferences based on just a few cases is often unwise. In addition, many modelling procedures break down when missing values are involved and the corresponding rows will either have to be removed completely or the values need to be estimated somehow.
+
+The next plot was inspired by this [well-organised kernel](https://www.kaggle.com/varimp/a-mostly-tidyverse-tour-of-the-titanic). What we see are the different combinations of missing values for the individual features. For instance, there are 529 NA's in *Cabin* alone, 158 in *Cabin* and *Age* simultaneously, 1 in *Fare*, and so on.
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 1", out.width="100%"}
+aggr(combine, prop = FALSE, combined = TRUE, numbers = TRUE, sortVars = TRUE, sortCombs = TRUE)
+```
+
+For the two text features, *Cabin* and *Ticket*, we use a neat property of boolean vectors (which also works in python):
+
+```{r}
+sum(is.na(combine$Ticket))
+sum(is.na(combine$Cabin))
+```
+
+The function *is.na* determines which of the elements are missing and gives a true/false output. In numerical functions like *sum*, "true" is always represented as "1" and "false" as "0". This way, we see immediately that all the *Ticket* information is complete but the vast majority of the *Cabin* numbers are missing.
+
+
+# Initial Exploration / Visualisation
+
+**Look at your data in as many different ways as possible.** Some properties and connections will be immediately obvious. Others will require you to examine the data, or parts of it, in more specific ways.
+
+
+## Individual features
+
+The *ggplot2* approach, introduced by Hadley Wickham, uses a common 'grammar' to describe a large variety of plotting functions. This style contains the following building blocks:
+
+- *data*: **what** we are plotting (the input)
+
+- *asthetics:* **where** we are plotting it (assignment of representation) 
+
+- *geoms:* **how** we are plotting it (the plotting style)
+
+These blocks are the same for any kind of plot, which makes it easy to switch from one visualisation to another once you've understood the basic principle. *Geom layers* can be added on top of one another to build more complex plots from these simple elements. This kernel contains a number of plotting examples for you to play with.
+
+We start with a relatively complex overview plot for which we create a dashboard-like view that shows the survival distribution in all the accessible features (i.e. without the text ones.) However, the most complicated thing here is the *multiplot* functionality which as a beginner you can ignore at the moment and come back to later. Also, the stuff with *guides* and *theme* is just styling. The important things happen in the first (data) and second (geom + aesthetics) line.
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 2", out.width="100%"}
+p_age = ggplot(train) +
+  geom_freqpoly(mapping = aes(x = Age, color = Survived), binwidth = 1) +
+  guides(fill=FALSE) +
+  theme(legend.position = "none")
+
+p_sex = ggplot(train, mapping = aes(x = Sex, fill = Survived)) +
+  geom_bar(stat='count', position='fill') +
+  labs(x = 'Sex') +
+  scale_fill_discrete(name="Surv") +
+  theme_few()
+
+p_class = ggplot(train, mapping = aes(x = Pclass, fill = Survived, colour = Survived)) +
+  geom_bar(stat='count', position='fill') +
+  labs(x = 'Pclass') +
+  theme(legend.position = "none")
+
+p_emb = ggplot(train, aes(Embarked, fill = Survived)) +
+  geom_bar(stat='count', position='fill') +
+  labs(x = 'Embarked') +
+  theme(legend.position = "none")
+
+p_sib = ggplot(train, aes(SibSp, fill = Survived)) +
+  geom_bar(stat='count', position='fill') +
+  labs(x = 'SibSp') +
+  theme(legend.position = "none")
+
+p_par = ggplot(train, aes(Parch, fill = Survived)) +
+  geom_bar(stat='count', position='fill') +
+  labs(x = 'Parch') +
+  theme(legend.position = "none")
+
+p_fare = ggplot(train) +
+  geom_freqpoly(mapping = aes(Fare, color = Survived), binwidth = 0.05) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+layout <- matrix(c(1,1,2,3,3,4,5,6,7),3,3,byrow=TRUE)
+multiplot(p_age, p_sex, p_fare, p_class, p_emb, p_sib, p_par, layout=layout)
+```
+
+There's a lot going on in this figure, so take your time to look at all the details.
+
+We learn the following things from studying the individual features:
+
+- *Age*: The medians are identical (see below). However, it's noticeable that fewer young adults have survived (ages 18 - 30-ish) whereas children younger than 10-ish had a better survival rate. Also, there are no obvious outliers that would indicate problematic input data. The highest ages are well consistent with the overall distribution. There is a notable shortage of teenagers compared to the crowd of younger kids. But this could have natural reasons. Here we choose a small binwidth for the plotted graph to emphasise that the data is not smooth. Later, we will use density plots to study the behaviour of *Age* (and *Fare*) on a more global scale.
+
+- *Pclass*: There's a clear trend that being a 1st class passenger gives you better chances of survival. Life just isn't fair.
+
+- *SibSp \& Parch*: Having 1-3 siblings/spouses/parents/children on board (SibSp = 1-2, Parch = 1-3) suggests proportionally better survival numbers than being alone (SibSp + Parch = 0) or having a large family travelling with you.
+
+- *Embarked*: Well, that does look more interesting than expected. Embarking at "C" resulted in a higher survival rate than embarking at "S". There might be a correlation with other variables, here though.
+
+- *Fare*: This is case where a linear scaling isn't of much help because there is a smaller number of more extreme numbers. A natural choice in this case is to use a logarithmic axis. The plot tells us that the survival chances were much lower for the cheaper cabins (i.e. the big red spike that's not mirrored by a blue spike). Naively, one would assume that those cheap cabins were mostly located deeper inside the ship, i.e. further away from the life boats.
+
+```{r}
+train %>%
+  group_by(Survived) %>%
+  summarise(median_age = median(Age, na.rm=TRUE))
+```
+
+The *tidyverse* ecosystem, also championed by Wickham, is a collection of packages which share a common 'language' to display and modify data. The *tidy* in tidyverse refers to the convention that the input data should be 'well behaved'; i.e. presented in a rectangular table with columns corresponding to different features and all rows being completely filled with observations for the features. The data we're working with here is pretty tidy already, but that won't always be the case (see the *tidyr* package for these messy cases).
+
+The *dplyr* package provides tools to work with tidy data. Together with the pipe, "\%\>\%", we can *chain* together individual *dplyr* operations in a clean and powerful way. In the example above, we pass a data frame (train) to be grouped (group_by) along one (or more) feature(s) and then compute the median age for these groups. Similarly, we can count occurences: 
+
+
+```{r}
+train %>%
+  group_by(Survived, Sex) %>%
+  count(Sex)
+```
+
+The *dplyr* function *mutate* allows us to add new columns to data frames (and assign column names) in the following, straight forward way:
+
+```{r}
+train %>% mutate(single = SibSp==0) %>% count(single) %>% group_by(single) %>% mutate(freq = n/nrow(train))
+
+train %>% mutate(single = Parch==0) %>% count(single) %>% group_by(single) %>% mutate(freq = n/nrow(train))
+```
+
+This shows us that 32\% of passengers had siblings on board and, independently of that, 24\% had parents/children on board.
+
+
+## Feature relations
+
+
+### Correlation overview
+
+After inspecting the available features individually you might have realised that some of them are likely to be connected. Does the age-dependent survival change with sex? How are PClass and Fare related? Are they strongly enough connected so that one of them is superfluous? Let's find out.
+
+
+
+We start with visualising the correlation matrix of the numerical and categorical variables we identified above. For this process, we use our first "proper" *dplyr*-style chain of commands. First, we remove the *PassengerID* and the three text features. This is accomplished using the *select* function. Intuitively, a minus sign in front of a column name removes that column. The we use *dplyr's mutate* to change the columns: we recode the *Sex* factor as integers and then convert all the factors to integer values. The output data frame is passed to the standard *cor* function to compute the correlation matrix.
+
+
+
+The visualisation uses the *corrplot* function from the eponymous (one of my favourite words!) package. *Corrplot* gives us great flexibility in manipulating the style of our plot. What we see, is the *correlation coefficients* for each combination of two features. In simplest terms: this shows whether two features are connected so that one changes with a predictable trend if you change the other. The closer this coefficient is to zero the weaker is the correlation. Both 1 and -1 are the ideal cases of perfect correlation and anti-correlation.
+
+
+
+Here, we are of course interested whether features correlate with the "Survived" variable, since this is what we ultimately want to predict. But we also want to know whether our potential predictors are *correlated among each other*, so that we can reduce the variance in our data set and improve the accuracy of our prediction.
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 3", out.width="100%"}
+
+train %>%
+
+  select(-PassengerId, -Name, -Cabin, -Ticket) %>%
+
+  mutate(Sex = fct_recode(Sex,
+
+           "0" = "male",
+
+           "1" = "female")
+
+        ) %>%
+
+  mutate(Sex = as.integer(Sex),
+
+         Pclass = as.integer(Pclass),
+
+         Survived = as.integer(Survived),
+
+         Embarked = as.integer(Embarked)) %>%
+
+  cor(use="complete.obs") %>%
+
+  corrplot(type="lower", diag=FALSE)
+
+
+
+```
+
+
+
+In this kind of plot we want to look for the bright, large circles which immediately show the strong correlations (size and shading depends on the absolute values of the coefficients; colour depends on direction). Anything that you would have to squint to see is usually not worth seeing  We see the following:
+
+
+
+- *Survived* is correlate most to *Sex*, and then to *Pclass*. *Fare* and *Embarked* might play a secondary role; the other features are pretty weak
+
+
+
+- *Fare* and *Pclass* are strongly related (1st-class cabins will be more expensive)
+
+
+
+- A correlation of *SibSp* and *Parch* makes intuitive sense (both indicate family size)
+
+
+
+- *Pclass* and *Age* seem related (richer people are on average older? not inconceivable)
+
+
+
+
+
+We take this overview plot as a starting point to investigate specific multi-feature comparisons in the following. Those examinations will likely result in more questions, which we can also examine (to a certain extend) in the same step. Here, we stop at defining new features which will be the subject of another section.
+
+
+
+When conducting your detailed studies of individual features it is useful to set out a (preliminary) plan that you want to be following to avoid getting distracted. Here we set the following targets, based on the correlation overview:
+
+
+
+- *Pclass vs Fare*
+
+
+
+- *Pclass vs Age*
+
+
+
+- *Pclass vs Embarked*
+
+
+
+- *Sex vs Parch*
+
+
+
+- *Age vs SibSp*
+
+
+
+- *SibSp vs Parch*
+
+
+
+- *Fare vs Embarked*
+
+
+
+We won't necessarily investigate them in this specific order, but it's good to have a list we can come back to and check what still needs to be done.
+
+
+
+
+
+### Multi-feature comparisons
+
+
+
+Now we continue to examine these initial indications in more detail. Earlier, we had a look at the *Survived* statistics of the individual features in Fig. 2. Here, we want to look at correlations between the predictor features and how they could affect the target *Survived* behaviour.
+
+
+
+Usually it's most interesting to start with the strong signals in the correlation plot and to examine them more in detail.
+
+
+
+#### *Pclass vs Fare*
+
+
+
+To compare a categorical variable like *Pclass* with a continuous variable like *Fare* there are several useful visualisations. We will use a *boxplot* here, and try some of the other ones later. Note the logarithmic y-axis, which we add using the *scale* function:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 4", out.width="100%"}
+
+ggplot(train, aes(Pclass, Fare, colour = Survived)) +
+
+  geom_boxplot() +
+
+  scale_y_log10()
+
+```
+
+
+
+In a boxplot, we display the median value (inside the box), the 1st and 3rd quartiles (lower and upper hinges), and the outliers (individual data points). And outlier is any point that is further than 1.5 the distance between the 1st and 3rd quartile (the inter-quartile range) away from the hinge.
+
+
+
+We find:
+
+
+
+- The different *Pclass* categories are clustered around different average levels of *Fare*. This is not very surprising, as 1st class tickets are usually more expensive than 3rd class ones.
+
+
+
+- In 2nd *Pclass*, and especially in 1st, the median *Fare* for the *Survived == 1* passengers is notably higher than for those who died. This suggests that there is a sub-division into more/less expensive cabins (i.e. closer/further from the life boats) even within each *Pclass*.
+
+
+
+It's certainly worth to have a closer look at the *Fare* distributions depending on *Pclass*. In order to contrast similar plots for different factor feature levels *ggplot2* offers the *facet* mechanism. Adding facets to a plot allows us to separate it along one or two factor variables. Naturally, this visualisation approach works best for relatively small numbers of factor levels.
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 5", out.width="100%"}
+
+train %>%
+
+  ggplot(aes(Fare, fill=Pclass)) +
+
+  geom_density(alpha = 0.5) +
+
+  scale_x_log10() +
+
+  facet_wrap(~ Survived, ncol = 1)
+
+
+
+```
+
+
+
+
+
+
+
+We learn:
+
+
+
+- There is a suprisingly broad distribution between the 1st class passenger fares
+
+
+
+- There's an interesting bimodality in the 2nd class cabins and a long tail in the 3rd class ones
+
+
+
+- For each class there is strong evidence that the cheaper cabins were worse for survival. A similar effect can be seen in a boxplot:
+
+
+
+#### *Pclass vs Embarked*
+
+
+
+First, we plot the frequency of the *Embarked* ports for the different *Pclass* factors and add a facet to split by the *Survived* factor:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 6", out.width="100%"}
+
+train %>%
+
+  filter(Embarked %in% c("S","C","Q")) %>%
+
+  ggplot() +
+
+  geom_bar(aes(Embarked, fill = Pclass), position = "dodge") +
+
+  facet_grid(~ Survived)
+
+```
+
+
+
+We find:
+
+
+
+- *Embarked == Q* contains almost exclusively 3rd class passengers
+
+
+
+- The survival chances for 1st class passengers are better for every port. In contrast, the chances for the 2nd class passengers were relatively worse for *Embarked == S* whereas the frequencies for *Embarked == C* look comparable.
+
+
+
+- 3rd class passengers had bad chances everywhere, but the relative difference for *Embarked == S* looks particularly strong.
+
+
+
+#### *Pclass vs Age* and multi-dimensional plots
+
+
+
+By now, we've got some practice with simple plots and facetted ones, so let's get a bit more adventurous:
+
+
+
+We will plot *Age* vs *Fare* and facet then by 2 variables, *Embarked* and *Pclass*, to create a grid. In addition, we use different colours for the *Survived* status and different symbols for *Sex*. The result is a comprehensive overview plot for the relationship between many of the main features:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 7", out.width="100%"}
+
+train %>%
+
+  filter(Embarked %in% c("S","C","Q")) %>%
+
+  ggplot(mapping = aes(Age, Fare, color = Survived, shape = Sex)) +
+
+  geom_point() +
+
+  scale_y_log10() +
+
+  facet_grid(Pclass ~ Embarked)
+
+```
+
+
+
+We find:
+
+
+
+- *Pclass == 1* passengers seem indeed on average older than those in 3rd (and maybe 2nd) class. Not many children seemed to have travelled 1st class.
+
+
+
+- Most *Pclass == 2* children appear to have survived, regardless of *Sex*
+
+
+
+- More men than women seem to have travelled 3rd *Pclass*, whereas for 1st *Pclass* the ratio looks comparable. Note, that those are only the ones for which we know the *Age*, which might introduce a systematic bias.
+
+
+
+Admittedly, there's a lot going on in this plot, but the difference between the upper left and lower right corner is striking. Armed with these insights, we can study individual relations in more detail.
+
+
+
+#### *Age vs Sex*
+
+
+
+This wasn't in our original list, but the multi-facet plot above prompts us to examine the interplay between *Age* and *Sex* more closely. Feel free to follow interesting signals in this exploratory stage, but keep the big picture in mind.
+
+
+
+Here we are using a density plot with colour overlap and facetting:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 8", out.width="100%"}
+
+ggplot(train, aes(x=Age)) +
+
+  geom_density(aes(fill = Survived), alpha = 0.5) +
+
+  facet_wrap(~Sex)
+
+```
+
+
+
+We find:
+
+
+
+- The distributions peaks are similar, but some substructures are different.
+
+
+
+- Younger boys had a notable survival advantage over male teenagers, whereas the same was not true for girls to nearly the same extent.
+
+
+
+- Most women over 60 survived, whereas for men the high-Age tail of the distribution falls slower.
+
+
+
+- Note that those are normalised densities, not histogrammed numbers. Also, remember that *Age* contains many missing values.
+
+
+
+#### *Pclass vs Sex*
+
+
+
+From Megan's [super-popular kernel(https://www.kaggle.com/mrisdal/exploring-survival-on-the-titanic) we borrow the idea of using a mosaic plot visualisation, because it's insightful and looks fancy at the same time. Here we apply it to the *Survived* statistics of *Pclass vs Sex*:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 9", out.width="100%"}
+
+mosaicplot(table(train$Survived, train$Sex, train$Pclass),
+
+           main = "Survival by Pclass and Sex", shade = TRUE)
+
+```
+
+
+
+In a mosaic plot, the size of the boxes corresponds to the number of observations contained in their specific categories. Here we also use a colour coding corresponding to a statistical test that tells us whether some boxes are more (blue) or less (red) populated than when assuming independent distributions for the categories. The overall separation is between "Survived == 0" (left) vs *Survived == 1* (right). Within these categories, the *Pclass* values are split from horizontally and the *Sex* categories are split vertically.
+
+
+
+We find:
+
+
+
+- Almost all females that died were 3rd *Plass* passengers.
+
+
+
+- For the males, being in 3rd *Pclass* resulted in a significant disadvantage regarding their *Survived* status.
+
+
+
+#### *Parch vs SibSp*
+
+
+
+Next, we will have a closer look at the family relation features *Parch* (number of parents or children on board) and *SibSp* (number of siblings or spouses on board). In order to see how many cases there were for each combination we will use a *count plot*:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 10", out.width="100%"}
+
+train %>%
+
+  ggplot(aes(Parch, SibSp, color = Survived)) +
+
+  geom_count()
+
+```
+
+
+
+Here, the size of the circles is proportional to the number of cases. The colours show which *Survived* status dominates ("1" is plotted over "0", as you can see at *Parch == SibSp == 0*).
+
+
+
+We find:
+
+
+
+- A large number of passengers were travelling alone.
+
+
+
+- Passengers with the largest number of parents/children had relatively few siblings on board.
+
+
+
+- Survival was better for smaller families, but not for passengers travelling alone.
+
+
+
+#### *Parch vs Sex*
+
+
+
+Another correlation that piqued our interest in the overview plot was the one between *Parch vs Sex*. Here we examine it in more detail using a barplot:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 11", out.width="100%"}
+
+train %>%
+
+  ggplot() +
+
+  geom_bar(aes(Parch, fill = Sex), position = "dodge") +
+
+  scale_y_log10()
+
+```
+
+
+
+We find:
+
+
+
+- Many more men travelled without parents or children than women did. The difference might look small here but that's because of the logarithmic y-axis.
+
+
+
+- The log axis helps us to examine the less frequent *Parch* levels in more detail: *Parch == 2,3* still look comparable. Beyond that, it seems that women were somewhat more likely to travel with more relatives. However, beware of small numbers:
+
+
+
+```{r}
+
+train %>%
+
+  group_by(Parch, Sex) %>%
+
+  count()
+
+```
+
+
+
+The difference between 4 women and 1 man with *Parch == 3* is close to being significant, as a simple binomial test will readily tell us. Here we test whether a finding of 1 of 5 passengers being male would still be expected given the overall ratio of men to women:
+
+
+
+```{r}
+
+binom.test(1, 5, p = 577/(577+314))
+
+```
+
+
+
+A p-value of just above 5\% does normally not count as significant. And even if it were just below 5\% there are several other variables here that could influence the statistics. Therefore, it's better to look at the larger numbers for a useful signal.
+
+
+
+
+
+#### *Age vs SibSp*
+
+
+
+The final correlation we noticed was between the *Age* and *SibSp* features. Naively, one would expect that a larger number of siblings would indicate a younger age; i.e. families with several kids travelling together. (Larger numbers of spouses would be unusual.) Let's see whether the data confirms our idea:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 12", out.width="100%"}
+
+train %>%
+
+  mutate(SibSp = factor(SibSp)) %>%
+
+  ggplot(aes(x=Age, color = SibSp)) +
+
+  geom_density(size = 1.5)
+
+```
+
+
+
+We find:
+
+
+
+- The highest *SibSp* values (4 and 5) are indeed associated with a narrower distribution peaking at a lower *Age*. Most likely groups of children from large families.
+
+
+
+- This will lead to a certain degree of interaction between *Age* and *SibSp* with respect to the impact on the *Survived* status. It might also allow us to predict *Age* from *SibSp* with a relatively decent accuracy for the higher *SibSp* values.
+
+
+
+
+
+## Missing values imputation
+
+
+
+After studying the relations between the different features let's fill in a few missing values based on what we learned.
+
+
+
+In my opinion, the only training feature for which it makes sense to fill in the NAs is Embarked. Too many Cabin numbers are missing. And for Age we will choose a different approach below. We fill in the 1 missing Fare value in the test data frame accordingly.
+
+
+
+We are performing these imputations on the combined data set, which we will also use as a basis for the step thereafter.
+
+
+
+Let's find the two passengers and assign the most likely port based on what we found so far:
+
+
+
+```{r}
+
+combine %>% filter(is.na(Embarked))
+
+```
+
+
+
+These are two women that travelled together in 1st class, were 38 and 62 years old, and had no family on board.
+
+
+
+```{r}
+
+combine %>%
+
+  filter(Embarked != "Q" & Pclass == 1 & Sex == "female") %>%
+
+  group_by(Embarked, Pclass, Sex, Pclass, Parch, SibSp) %>%
+
+  summarise(count = n())
+
+```
+
+
+
+Admittedly, these are quite a few grouping levels, but 30 ("C") vs 20 ("S") are numbers that are still large enough to be useful in this context. In addition, already a grouping without the Parch and SibSp features suggests similar numbers for women in 1st class embarking from "C" (71) vs "S" (69) (in contrast to the larger overall number of all 1st class passengers leaving from "S").
+
+
+
+Another kernel [(definitely worth checking out)](https://www.kaggle.com/varimp/a-mostly-tidyverse-tour-of-the-titanic) makes a convincing case for predicting Embarked == "S" for these two passengers (see also the comments). However, in my opinion we have better reasons to impute "C" instead. I recommend that you weigh the arguments and make your own decision.
+
+
+
+*(How much does it actually matter? Well, in the big picture these are only 2 passengers and their impact on our model accuracy won't be large. However, since the main point of this challenge is to practice data analysis it is certainly worth to take your time to examine the question in a bit more detail.)*
+
+
+
+Practically, we can replace values using dplyr's *mutate* and a handy *case\_when* statement, since we are modifying both NA's to the same value:
+
+
+
+```{r}
+
+combine <- combine %>%
+
+  mutate(Embarked = as.character(Embarked)) %>%
+
+  mutate(Embarked = case_when(
+
+    is.na(Embarked) ~ "C",
+
+    TRUE ~ Embarked
+
+  )) %>%
+
+  mutate(Embarked = as.factor(Embarked))
+
+```
+
+
+
+Next, this is the passenger for which *Fare* is missing:
+
+
+
+```{r}
+
+print(filter(combine, is.na(Fare)), width = Inf)
+
+```
+
+
+
+A 60-yr old 3rd class passenger without family on board. We will base our Fare prediction on the median of the 3rd-class fares:
+
+
+
+```{r}
+
+med_fare_3 <- combine %>%
+
+  filter(!is.na(Fare)) %>%
+
+  group_by(Pclass) %>% 
+
+  summarise(med_fare = median(Fare)) %>%
+
+  filter(Pclass == 3) %>%
+
+  .$med_fare
+
+
+
+combine <- combine %>%
+
+  mutate(Fare = case_when(
+
+    is.na(Fare) ~ med_fare_3,
+
+    TRUE ~ Fare
+
+  ))
+
+```
+
+
+
+This concludes the missing values imputation. We will deal with the *Age* feature in a different way.
+
+
+
+
+
+# Derived (engineered) features
+
+
+
+The next idea is to define new features based on the existing ones that allow for a split into survived/not-survived with higher confidence than the existing features. An example would be "rich woman" vs "poor man", but this particular distinction should be handled well by most classifiers. We're looking for something a bit more subtle here.
+
+
+
+This part of the analysis is called *Feature Engineering*. I prefer the approach to list all the new features that we define together in one place, to keep an overview. Every time we can think of a new feature, we come back here to define it and then study it further down. We compute the new features in the combined data set, to make sure that all feature realisations are complete, and then split the combine data again into train and test.
+
+
+
+Practically, we use dplyr's *mutate* to add new features. The extraction of the new *title* feature using regular expressions was contributed by [Nad13](https://www.kaggle.com/nad136) in the comments (many thanks!). Finally, we use the *fct\_lump* function from the *forcats* package (factor manipulation) to lump together all the rare titles into an "Other" category.
+
+
+
+In the same way as for the missing values, we're adding all features to the combine sample and then split it back into train and test afterwards. Besides being more efficient to write, this approach also allows us to catch factor levels that are missing in one set versus the other.
+
+
+
+```{r}
+
+combine <- mutate(combine,
+
+       fclass = factor(log10(Fare+1) %/% 1),
+
+       age_known = factor(!is.na(Age)),
+
+       cabin_known = factor(!is.na(Cabin)),
+
+       title_orig = factor(str_extract(Name, "[A-Z][a-z]*\\.")),
+
+       young = factor( if_else(Age<=30, 1, 0, missing = 0) | (title_orig %in% c('Master.','Miss.','Mlle.')) ),
+
+       child = Age<10,
+
+       family = SibSp + Parch,
+
+       alone = (SibSp == 0) & (Parch == 0),
+
+       large_family = (SibSp > 2) | (Parch > 3),
+
+       deck = if_else(is.na(Cabin),"U",str_sub(Cabin,1,1)),
+
+       ttype = str_sub(Ticket,1,1),
+
+       bad_ticket = ttype %in% c('1', '5', '6', '7', '8', 'A', 'F', 'W')
+
+       )
+
+
+
+tgroup <- combine %>%
+
+  group_by(Ticket) %>%
+
+  summarise(ticket_group = n()) %>%
+
+  ungroup
+
+
+
+combine <- left_join(combine, tgroup, by = "Ticket") %>%
+
+    mutate(shared_ticket = ticket_group > 1)
+
+
+
+combine <- combine %>%
+
+  mutate(fare_eff = Fare/ticket_group,
+
+         title = fct_lump(title_orig, n=4),
+
+         )
+
+
+
+train <- combine %>% filter(!is.na(Survived))
+
+test <- combine %>% filter(is.na(Survived))
+
+```
+
+
+
+These are the new features we are defining here:
+
+
+
+- *fclass*: An empirically binning of the *Fare* feature into logarithmic steps. This will allow us to distinguish more broadly between low/medium/high *Fares*.
+
+
+
+- *age\_known*: Whether the *Age* of the Passenger was known. Naively, one might expect that it would be more likely to know the *Age* of a Survivor, since it is easier to ask them. The same is true for the *cabin\_known* feature.
+
+
+
+- *title*: The passenger title (e.g. "Mrs", "Master", "Dr", "Dona") as extracted from the *Name* feature. Certain titles will be associated with *Age* groups; which we will use for the next feature:
+
+
+
+- *young*: Whether the passenger was below 30 years old or had a title suggesting (mostly) a younger age. For the similar *child* variable we only look at the age.
+
+
+
+- *family, alone*, and *large family* attempt to bin the two family features, *Parch* and *SibSp*, into groups that might have more distinguishing power.
+
+
+
+- *deck* takes the initial character of the *Cabin* number to be the deck. In a similar approach, we define *ttype* (or ticket type) as the initial character of the *Ticket*. Those grouping might or might not be helpful, but they should be tested.
+
+
+
+Again, this list will grow as new features are being added.
+
+
+
+
+
+## Age-related parameters: age\_known, young, child
+
+
+
+Let's check how our enginnered age-related parameters perform with regard to survival and to the underlying *Age* distribution:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 13", out.width="100%"}
+
+p1 <- train %>%
+
+  ggplot(aes(age_known, fill = Survived)) +
+
+  geom_bar(position = "fill")
+
+
+
+p2 <- train %>%
+
+  ggplot(aes(child, fill = Survived)) +
+
+  geom_bar(position = "fill")
+
+
+
+p3 <- train %>%
+
+  ggplot(aes(young, fill = Survived)) +
+
+  geom_bar(position = "fill")
+
+
+
+p4 <- train %>%
+
+  ggplot(aes(Age, fill = young)) +
+
+  geom_density(alpha = 0.5)
+
+
+
+layout <- matrix(c(1,2,3,4),2,2,byrow=TRUE)
+
+multiplot(p2, p3, p4, p1, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- Both *child* and *young* appear to give a survival boost. Due to the way it was defined, the *child* feature includes all the missing values of the original *Age* feature which makes its application more difficult. In this regard, *young* appears to be the more useful feature and the density plot shows that it manages to divide the *Age* distribution relatively cleanly, except for a few false positives towards higher ages.
+
+
+
+- *age\_known*: Consistent with our expectation, there appears to be a survival advantage for passengers for whom we know the *Age*.
+
+
+
+As a sanity check, let's investigate whether these age effects are real or caused by the correlations of the original *Age* with *Plcass* and *Sex* that we noticed above:
+
+
+
+Here we create another facet grid between two variables. Since we already have experience with facet grids, let's add a new element: a *function*. Whenever you want to repeat something more than a few times it is a good idea to put these procedures into a function. This way, complex chains of commands can be easily re-used without copy-pasting a lot of code and running the risk of making editing mistakes.
+
+
+
+We first define a plotting function for a filled barplot in a grid. This function uses the `aes_string` method to define the aesthetics instead of our familiar `aes` call. The difference between the two is indicated in their names: `aes_string` takes string values as input instead of the non-standard evaluation of `aes`. We then also use the `reformulate` tool of the *stats* package to encode our facet grid variables accordingly:
+
+
+
+```{r}
+
+plot_bar_fill_grid <- function(barx, filly, gridx, gridy){
+
+  
+
+  train %>%
+
+    ggplot(aes_string(barx, fill = filly)) +
+
+    geom_bar(position = "fill") +
+
+    facet_grid(reformulate(gridy,gridx))
+
+}
+
+```
+
+
+
+
+
+Then we call this function to plot the survival statistics for the new *young* feature:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 15", out.width="100%"}
+
+plot_bar_fill_grid("young", "Survived", "Sex", "Pclass")
+
+```
+
+
+
+
+
+
+
+We find that being *young* makes not a big difference for female passengers. However, for the males is appears to give a consistent survival advantage through the different *Pclass* categories.
+
+
+
+
+
+Now we can repeat the same plot for the *age\_know* feature with only minimal adjustment:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 16", out.width="100%"}
+
+plot_bar_fill_grid("age_known", "Survived", "Sex", "Pclass")
+
+```
+
+
+
+We find:
+
+
+
+- For women *age\_known* appears to decrease survival rates throughout the *Pclasses*. Moreover, while for men in *Pclass* 1 or 3 a known age seems to help survival it is the opposite for *Pclass* 2.
+
+
+
+- Since *Pclass == 3* males make up the largest part of the passengers it is not surprising that their survival advantage for *age\_known == 1* translates to a global one. There might be a more complex relation here between different parameters, but we will check this at the modelling stage.
+
+
+
+
+
+**Decision:** We will include the *young* feature in our model. We will also include the *age\_known* feature to carefully investigate its impact.
+
+
+
+
+
+## Family-related parameters: *family, alone, large\_family*
+
+
+
+Next are the engineered parameters that are related to the size of the travelling family:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 16", out.width="100%"}
+
+p1 <- train %>%
+
+  mutate(family = as.factor(family)) %>%
+
+  ggplot(aes(family, fill = family)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none")
+
+
+
+p2 <- train %>%
+
+  ggplot(aes(alone, fill = Survived)) +
+
+  geom_bar(position = "fill")
+
+
+
+p3 <- train %>%
+
+  mutate(family = as.factor(family)) %>%
+
+  ggplot(aes(family, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  theme(legend.position = "none")
+
+
+
+p4 <- train %>%
+
+  ggplot(aes(large_family, fill = Survived)) +
+
+  geom_bar(position = "fill")
+
+
+
+layout <- matrix(c(1,1,2,3,3,4),2,3,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+```
+
+
+
+A few remarks on colour and style: We can add a little colour to our bar plots by using that colour as an additional encoding for the main feature, in this case *family* size. I admit that I'm in two minds about this, because the colour does not add any new information and I believe one should use styling elements to encode unique information. On the other hand, I also feel that the colour makes the plot more lifely. I'm including it here as an example for you to make up your own mind about style choices.
+
+
+
+We find:
+
+
+
+- People who were travelling without any relatives or spouses were the largest faction of the passengers.
+
+
+
+- Both being a single traveller *or* having a large family on board appeared to have had a negative impact on the survival chances. We see that clearly in the two-bar plots on the right hand side of the figure and also in the breakdown of survival percentages per family size. The best survival chances did exist for passengers with 1-3 family members on board.
+
+
+
+
+
+For examining the impact of the *Sex* and *Pclass* categories on our new features we choose a grid of *stacked* barplots, instead of *filled* ones as above, to also have an overview of the the absolute numbers:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 16", out.width="100%"}
+
+p1 <- train %>%
+
+  ggplot(aes(alone, fill = Survived)) +
+
+  geom_bar(position = "stack") +
+
+  facet_grid(Pclass ~ Sex) +
+
+  theme(legend.position = "none")
+
+
+
+p2 <- train %>%
+
+  ggplot(aes(large_family, fill = Survived)) +
+
+  geom_bar(position = "stack") +
+
+  facet_grid(Pclass ~ Sex) +
+
+  theme(legend.position = "none")
+
+
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- The clearly largest faction of *alone* travellers are found among the males in 3rd *Pclass*, where their survival chances are low. Interestingly, for the *female* 3rd *Pclass* passengers that were travelling *alone* the *Survived* rates were actually slightly better. A similar thing appears to be true for women in 1st class, but they have very good survival chances in the first place. Male solo travellers in 1st and 2nd class had lower survival chances as well.
+
+
+
+- The distribution of the *large\_family* feature is similar to the *alone* feature in the sense that most large families travelled in 3rd class and had slim survival chances. Once more, the *Survived* rates for female passengers were generally better, although even those were hitting a distinct low for *large\_families* in 3rd *Pclass*. Not enough large families were travelling in 1st or 2nd *Pclass* for there to be much of an impact.
+
+
+
+For *Pclass == 3* alone, this is what the relative survival percentages look like:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 16", fig.height=3.5, out.width="100%"}
+
+p1 <- train %>%
+
+  filter(Pclass == 3) %>%
+
+  ggplot(aes(alone, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  facet_wrap(~ Sex)
+
+
+
+p2 <- train %>%
+
+  filter(Pclass == 3) %>%
+
+  ggplot(aes(large_family, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  facet_wrap(~ Sex)
+
+
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+
+
+We find that for the male Passengers there was somewhat of a survival advantage when travelling not *alone* and not in a *large\_family*.
+
+
+
+
+
+## Cabin- and ticket-related parameters: *deck*, *cabin\_known*, *ttype*, *bad\_ticket*, *ticket\_group*, *shared\_ticket*  {.tabset}
+
+
+
+By now, we are confident enough in the usage of the individual visualisations to add another styling method: *tabsets*. A tabset is defined in the Rmarkdown code and it allows us to create a style of presentation that is more interactive and compact. By clicking on the different tabs you can examine the individual new features derived from the ticket and cabin numbers without having to scroll back and forth.
+
+
+
+
+
+### *Deck* {-}
+
+
+
+We derive the *deck* as the first character of the *Cabin* number. This does not necessarily have to be a correct assumption. This character could also refer to sections of the ship like *port vs starboard* that don't encode a structure of vertical layers. However, without external data, which we are trying to avoid in this kernel, our definition of *deck* has to be based on reasonable assumptions. The predictive power of this feature will tell us something about its validity.
+
+
+
+As we've seen before (and in the previous tab), the cabin information is not known for most of the passengers. Nevertheless, we can examine the *Survival* statistics for the different *decks*:
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 17", out.width="100%"}
+
+p1 <- train %>%
+
+  filter(deck != "U") %>%
+
+  ggplot(aes(deck, fill = Pclass)) +
+
+  geom_bar(position = "dodge") +
+
+  coord_polar() +
+
+  #theme(legend.position = "none") +
+
+  scale_y_log10()
+
+
+
+p2 <- train %>%
+
+  filter(deck != "U") %>%
+
+  ggplot(aes(deck, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  facet_wrap(~ Pclass, nrow = 3)
+
+
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- Here we combine the bar chart geom with a polar coordinate transformation to create a different kind of visualisation (left panel). **Caution:** this design is dangerously similar to a pie chart, which has a well-deserved notoriety for being very difficult to interpret by human brains. The plot is more a proof of concept here on how to create different visualisations from the basic building blocks we already know. We see that `deck == B & C` were the most popular (known) options. Note the logarithmic radial axis.
+
+
+
+- The right panel gives us the *Survived* fraction per *deck*. By facetting this plot by *Pclass* we immediately see which decks were associated with the difference passenger classes. 1st-class passengers were exclusively present on *decks* "A", "B", and "C"; but absent from the rare *decks* "F" and "G". Within the (alphabetically) first three *decks*, "B" had a higher *Survived* percentage than "C" and especially "A". This may provide a useful 2nd-order effect for the survival chances of the 1st-class travellers.
+
+
+
+- The polar plot highlights again that the vast majority of passengers with `cabin\_known == TRUE` were travelling in 1st class.
+
+
+
+- Among the few 3rd-class passengers with *known cabin*, all of those on `deck == 5` survived. Those were only 3 people, though; which makes the number still comparable to the overall low survival rate for `Pclass == 3`.
+
+
+
+- For 2nd-class travellers there is almost no difference in the (rather high) survival rate for the three *decks* "D", "E", and "F" which are known for them.
+
+
+
+
+
+### *Cabin\_known* {-}
+
+
+
+Similar to the known *Ages*, what about the small number of passengers for which we know their cabin numbers? Were they more likely to survive?
+
+
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 18", out.width="100%"}
+
+p1 <- train %>%
+
+  mutate(cabin_known = fct_recode(cabin_known, F = "FALSE", T = "TRUE")) %>%
+
+  ggplot(aes(cabin_known, fill = Survived)) +
+
+  geom_bar(position = "dodge") +
+
+  facet_grid(Sex ~ Pclass) +
+
+  scale_y_log10() +
+
+  theme(legend.position = "none")
+
+
+
+p2 <- train %>%
+
+  mutate(cabin_known = fct_recode(cabin_known, F = "FALSE", T = "TRUE")) %>%
+
+  ggplot(aes(cabin_known, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  facet_grid(Sex ~ Pclass) +
+
+  theme(legend.position = "bottom")
+
+
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+We find that there is somewhat of an advantage for the *male* and *3rd class* Passengers, although the overall numbers are small (note the logarithmic y-axes on the left). A lot of the overall effect of *cabin\_known* can be understood as *Pclass* and *Sex* variations: we are more likely to know the cabin numbers of 1st class passengers and women.
+
+
+
+Here we also recode our binary levels *FALSE* and *TRUE* as *F* and *T* to make the axis annotations cleaner. This renaming is not urgently needed here but it's useful to include an example of how to do it.
+
+
+
+
+
+### *Ttype* {-}
+
+
+
+Analogous to the *deck* feature, the ticket type (*ttype*) is simply the first digit of the *Ticket* number:
+
+
+
+```{r  fig.align = 'default', warning = FALSE, fig.cap ="Fig. 19", out.width="100%"}
+
+p1 <- train %>%
+
+  ggplot(aes(ttype, fill = ttype)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  facet_wrap(~ Pclass, nrow=3)
+
+
+
+av_surv <- train %>%
+
+  group_by(Pclass, Survived) %>%
+
+  count() %>%
+
+  spread(key = Survived, value = n) %>%
+
+  mutate(frac = `1`/(`0`+`1`))
+
+
+
+p2 <- train %>%
+
+  ggplot(aes(ttype, fill = Survived)) +
+
+  geom_bar(position = "fill") +
+
+  facet_wrap(~ Pclass, nrow = 3) +
+
+  geom_hline(data = av_surv, aes(yintercept = frac), linetype=2)
+
+
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- There are 16 different kinds of *ttype* and the most frequent ones are strongly correlated to the *Pclass*; e.g. "1" and "P" for 1st class, "2" for 2nd class, and "3" for 3rd class. Other *ttypes* are shared relatively equally between two classes, such as "C" and "S" for 2nd/3rd *Pclass*.
+
+
+
+- The most frequent *ttypes* for each *Pclass* have *Survived* fractions that are consistent with the overall survival rates for this *Pclass* (as indicated by the horizontal dashed lines). *ttypes* with higher survival rates, such as "2" for 1st class or "9" for 3rd class, typically apply to only a handful of cases and therefore might be due to random variation. An exception might be `ttype == 2 & Pclass == 3` which has more than 50 occurences and might be related to a higher survival rate.
+
+
+
+- There are a few *ttypes* with larger numbers and apparently *lower* survival rates, most prominently "A" for 3rd class. Those cases might be a useful higher-order predictor.
+
+
+
+From a coding point of view, it is worth to highlight that for computing the *Pclass*-wise survival rates we used the `spread` function of the `tidyr` package, which is an integral part of the tidyverse. `Spread` allows us to tidy up data frames by spreading related features of variables over additional columns. Together with its opposite tool `gather`, `spread` provides a powerful tidy way to re-arrange data just the way we need it for a given task.
+
+
+
+**Decision:** We will include the *ttype* feature in our model and also investigate whether we can isolate the *ttype* values with the most (negative) impact.
+
+
+
+
+
+### *Bad\_ticket* {-}
+
+Based on the previous tab we define a new feature called *Bad\_ticket* under which we collect all the ticket numbers that start with digits which suggest lower survival chances than average for any of the *Pclass* groups. Those are: "1, 5, 6, 7, 8, A, F, W".
+
+Once more, we are aware that some of the survival fractions we see above are based on small number statistics. It is well possible that some of our "bad tickets" are merely statistical fluctuations from the base survival rate per *Pclass*. However, I think that without external information, which we are avoiding in this notebook, we can't do much better in trying to tie the ticket number to the survival statistics.
+
+Of course, it's not the tickets themselves that are "bad" for survival, but the possibility that the ticket numbers might encode certain areas of the ship that would have led to higher or lower survival chances.
+
+Here we compute and display the survival fraction for *bad\_tickets* vs the rest, together with the corresponding binomial error bars. We use the a short helper function, and again the `spread` tool, to compute the 95% confidence levels for the two categories. This is the result:
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 20", out.width="100%"}
+train %>%
+  mutate(bad_ticket = factor(bad_ticket)) %>%
+  group_by(bad_ticket, Survived) %>%
+  count() %>%
+  spread(Survived, n, fill = 0) %>%
+  mutate(frac_surv = `1`/(`1`+`0`)*100,
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100,
+         ) %>%
+  ggplot(aes(bad_ticket, frac_surv, fill = bad_ticket)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 1) +
+  labs(y = "Survival fraction") +
+  theme(legend.position = "none")
+```
+
+We find that only about 20-30% of passengers with a *bad\_ticket* survived, while the survival fraction among the rest was about 50%. As we saw in the previous tab the ticket numbers appear to contain some useful signal.
+
+**Decision:** We will include *bad\_ticket* in our initial modelling to see how it performs in the presence of the potentially more flexible *ttype* variable.
+
+
+### *Ticket\_group* and *Shared\_ticket* {-}
+
+Looking closely at the *Tickets*, we find that often different people have the same ticket number. We group the passengers by their *Tickets* and assigning the number of people who share that specific *Ticket* to the new *ticket\_group* feature. On top of that, we create a simplified *shared\_ticket* feature indicating whether the passenger shared their *Ticket* with another passenger or not. Here is an example:
+
+```{r}
+train %>%
+  arrange(Ticket) %>%
+  select(Ticket, ticket_group, shared_ticket, Name) %>%
+  head(9) %>%
+  tail(-3)
+```
+
+*Ticket* "110413" is being shared by 3 people, the "Taussigs", while *Ticket* "110465" is being shared by "Mr. Porter" and "Mr. Clifford". *Ticket* "110564" was only held by "Mr. Bjornstrom-Steffansson".
+
+Let's plot the impact of these features on the Survival rate:
+
+```{r fig.align = 'default', warning = FALSE, fig.cap ="Fig. 21", out.width="100%"}
+p1 <- train %>%
+  group_by(Survived, shared_ticket) %>%
+  count() %>%
+  ggplot(aes(shared_ticket, n, fill = Survived)) +
+  geom_col(position = "dodge") +
+  geom_label(aes(label = n), position = position_dodge(width = 1)) +
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+p2 <- train %>%
+  ggplot(aes(ticket_group, fill = Survived)) +
+  geom_bar(position = "dodge") +
+  theme(legend.position = "none") +
+  scale_y_log10()
+
+p3 <- train %>%
+  ggplot(aes(shared_ticket, fill = Survived)) +
+  geom_bar(position = "fill") +
+  facet_wrap(~ Pclass) +
+  theme(legend.position = "none")
+
+p4 <- train %>%
+  ggplot(aes(ticket_group, Fare)) +
+  stat_summary(fun.data = "mean_cl_boot", col = "red")
+
+layout <- matrix(c(1,2,3,4),2,2,byrow=TRUE)
+multiplot(p1, p2, p3, p4, layout=layout)
+```
+
+We find:
+
+- *Sharing* a ticket appears to have a positive influence on the *Survival* chances (upper left panel). For this barplot we make use of the `geom_label` tool, with `count` and `geom_col`, to plot the numbers on top of the bars. This is a nice styling detail that becomes more useful for busier plots. It allows us to remove the y-axis numbers which would now be redundant.
+
+- Breaking up the *ticket sharing* by the number of people on a *Ticket*, we find that the higher *Survival* chances are mostly found for groups of 2-4 people per ticket (upper right panel). Below 4 people the numbers become small (note the logarithmic y-axis) but consistently point at lower *Survival* rates.
+
+- The lower left panel facets the *shared\_ticket* bar plot by *Pclass* and shows the relative percentages. Here we see that *ticket sharing* has a somewhat higher positive impact for the already better-off 1st-class passengers, compared to 3rd-class travellers.
+
+- An interesting feature is seen in the lower right panel when looking at the average *Fare* per *ticket\_group*. This plot shows that *fares* are increasing significantly for larger numbers of people on a *Ticket*. This applies only up to 4 people, though, after which the uncertainties become larger (due to fewer cases) and the trend loses significance. In fact, after 6 people the *Fares* start to decline again. This plot makes use of the `stat_summary` tool which provides bootstrapped confidence levels.
+
+
+## Fare-related parameters: *fclass, fare\_eff*
+
+
+### *fclass*
+
+First of all, based on the *Fare* distribution we define an empirically binned *Fare class (fclass)* with logarithmic limits of `10 < Fare < 100` for the medium bin. Most likely our modelling algorithms will be able to deal with the raw *Fare* values directly, but the binning could help us to gain additional exploratory insights.
+
+A *sinaplot*, as implemented in the [ggforce package](https://cran.r-project.org/web/packages/ggforce), is like a mix between a jitter plot and a violin plot, where the jitter of the points traces the density of the distribution. Therefore, a sinaplot "conveys information of both the number of data points, the density distribution, outliers and spread in a very simple, comprehensible and condensed format" (quoted from the [sinaplot package](https://cran.r-project.org/web/packages/sinaplot/vignettes/SinaPlot.html)).
+
+In addition, we use the visual method of a *facet\_zoom*, also via *ggforce*, to examine `Pclass == 3` data points in greater detail. The zoomed area (on the left) is highlighted in the full plot (on the right) in a darker shade of grey (**zoom currently unavailable**)
+
+```{r fig.align = 'default', warning = FALSE, message=FALSE, fig.cap ="Fig. 22", out.width="100%"}
+train %>%
+  filter(Fare > 0) %>%
+  ggplot(aes(fclass, Fare, color = Pclass)) +
+  geom_sina(alpha = 0.5) +
+  scale_y_log10() +
+  #coord_flip() +
+  guides(color = guide_legend(override.aes = list(alpha = 1, size = 4))) #+
+  #facet_zoom(xy = Pclass == 3)
+```
+
+We find that the low/high fare values allow us a clean separation into 3rd/1st class passengers. The medium *fclass* however, between `Fare == 10` and `Fare == 100`, remains a mix between all three *Pclass* values. This is not so much a problem in terms of modelling input, since we wouldn't gain much new information by defining a fare class that has a one-to-one correlation with the passenger class. However, a better understanding of the *Fare* distribution with respect to other features can help us to design better models by describing how more expensive *Cabins* could have been related to better *Survival* chances.
+
+**Decision:** We will not include the *fclass* feature in our model, but investigate its impact on other features.
+
+
+### *Fare\_eff*
+
+Another way of studying the *Fare* impact is to realise that passengers who shared their ticket also had the same *Fare* values. This is true almost exclusively, except for a single *Ticket*, when we look at the *Fare* variation within a *ticket\_group*:
+
+```{r fig.align = 'default', warning = FALSE, message=FALSE, fig.cap ="Fig. 22", out.width="100%"}
+train %>%
+  group_by(Ticket) %>%
+  summarise(ct = n(),
+            sd_fare = sd(Fare)) %>%
+  filter(ct > 1) %>%
+  arrange(desc(sd_fare)) %>%
+  head(3)
+```
+
+One possible reason for these identical values is that our data show in fact not the *Fare* per passenger but the *Fare* per *Ticket*, and that each passenger paid a certain (maybe equal) share of this *Fare*. Another possibility is that the *Fare* is indeed given per passenger and that the shared *Ticket* numbers simply indicate  *Cabins* with equal pricing.
+
+Here we investigate the first interpretation by defining an *effective fare (fare\_eff)* by dividing `Fare / ticket\_group`. We visualise the change in fare distribution for the 3 *Pclasses* using so-called *ridgeline plots* through [ggridges](https://cran.r-project.org/web/packages/ggridges/). Ridgeline plots allow for a quick comparison of overlapping (density) curves. Here we adjust the x-axis ranges of the *Fare* vs *fare_eff* plots:
+
+```{r fig.align = 'default', warning = FALSE, message=FALSE, fig.cap ="Fig. 27", out.width="100%"}
+p1 <- train %>%
+  filter(Fare>0) %>%
+  ggplot(aes(Fare, Pclass, fill = Pclass)) +
+  geom_density_ridges() +
+  scale_x_log10(lim = c(3,1000)) +
+  scale_fill_cyclical(values = c("blue", "red"))
+
+p2 <- train %>%
+  filter(fare_eff>0) %>%
+  ggplot(aes(fare_eff, Pclass, fill = Pclass)) +
+  geom_density_ridges() +
+  scale_x_log10(lim = c(3,1000)) +
+  labs(x = "Effective Fare") +
+  scale_fill_cyclical(values = c("blue", "red"))
+
+layout <- matrix(c(1,2),2,1,byrow=TRUE)
+multiplot(p1, p2, layout=layout)
+```
+
+
+We find:
+
+- The new effective fare (*fare\_eff*) does indeed allow us to separate better the *Pclass* groups according to their fare.
+
+- The overlap between the 1st and 2nd class has practically disappeared. The broad bimodality of the 2nd-class fares has gone (being replaced by a finer structure) and so has the high-fare tail of the 3rd class.
+
+- Furthermore, the highest *fare\_eff* values are not quite as extreme anymore as for the original *Fare* (quoted first):
+
+```{r}
+print(c(max(train$Fare), max(train$fare_eff)))
+```
+
+
+Another way of visualising the relation between the original *Fare* and the new *fare\_eff* feature is through a scatter plot with marginal histograms. Here we use the function `ggMarginal`, provided by the `ggExtra` [package](https://cran.r-project.org/web/packages/ggExtra/), which automatically adds histograms to the plot margins. We also colour-code the *Pclass* for each data point and add a pinch of jitter to separate overlapping observations:
+
+```{r fig.align = 'default', warning = FALSE, message=FALSE, fig.cap ="Fig. 24", out.width="100%"}
+p <- train %>%
+  filter(Fare>0) %>%
+  mutate(log_fare = log10(Fare), log_fare_eff = log10(fare_eff)) %>%
+  ggplot(aes(log_fare, log_fare_eff, color = Pclass)) +
+  geom_jitter(size=2, width = 0.01, height = 0.01) +
+  #geom_point(size=2) +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_legend(ncol = 3, keywidth = 1, keyheight = 1))
+ggMarginal(p, type="histogram", fill = "grey45", bins=20)
+```
+
+We find:
+
+- Our *fare\_eff* feature results in a much cleaner separation between the *Pclass* groups, as already seen in the joyplot above. This is particularly true for 2nd vs 3rd class, which are more mixed up in the original *Fare* feature (view plot from top to bottom) than in *fare\_eff* (left to right). But also the 1st *Pclass* is much better separated.
+
+- In addition, we see nicely the stratification into the ticket-sharing groups, with individual tickets populating the `Fare == fare\_eff` line. It is notable that the other groups, with shared ticket groups of increasing numbers, have roughly the same minimum and maximum *fare\_eff* values than this first individual group, except for a few outliers. This impression is especially strong for passengers who shared their ticket with one other passenger, and it is consistent with the suggestion that these are the actual fares reflected in the partition of the cabins into passenger classes.
+
+**Decision:** We will include the *fare\_eff* feature in our model, possibly replacing the *Fare* feature.
+
+
+## Title
+
+We extracted the *title* of each passenger (e.g. Mrs or Master) from the *Name* character string. Originally, there were 18 different titles (feature *title\_orig*) with different frequencies of occurences in the train + test data sets. For our analysis we further group all the rare titles into an "Other" category and then compare their *Age* distributions and *Survived* fractions:
+
+```{r fig.align = 'default', warning = FALSE, message=FALSE, fig.cap ="Fig. 25", out.width="100%"}
+p1 <- combine %>%
+  group_by(title_orig) %>%
+  count() %>%
+  ggplot(aes(reorder(title_orig, -n, FUN = max), n, fill = title_orig)) +
+  geom_col() +
+  #scale_y_sqrt() +
+  theme(legend.position = "none", axis.text.x  = element_text(angle=45, hjust=1, vjust=0.9)) +
+  labs(x = "Original Titles", y = "Frequency")
+
+p2 <- train %>%
+  ggplot(aes(title, Age, fill = title)) +
+  geom_violin() +
+  theme(legend.position = "none") +
+  labs(x = "Title groups")
+
+p3 <- train %>%
+  ggplot(aes(Survived, fill = title)) +
+  geom_bar(position = "dodge") +
+  labs(fill = "Title group")
+
+layout <- matrix(c(1,1,2,3),2,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, layout=layout)
+```
+
+We find:
+
+- The most frequent *titles* are "Mr", "Miss", "Mrs", and "Master". The overview plot of the *original titles* showcases how to rotate axis labels to improve their readability.
+
+- We visualise the *Age* distributions of the *title* groups using *violin plots*. A violin plot is similar to a boxplot in that it shows the range of the data. In addition, the outline of the "violin" shows the density of the distribution; thereby highlighting its frequency profile. Here we see especially that "Master" is capturing the male children/teenagers very well.
+
+- The "Miss" *title* applies to girls as well as younger women up to about 40. Mrs does not contain many teenagers, but has a sizeable overlap with Miss; especially in the range of 20-30 years old. Nevertheless, Miss is more likely to indicate a younger woman. Overall, there is a certain amount of variance and we're not going to be able to pinpoint a certain age based on the title.
+
+- In the *Survival* statistics we recover the *Sex* dependency that results in "Mr" having far worse survival chances than the other *titles*.
+
+In consequence, we decide to model 2 *Age* Groups through the *Young* feature variable we have already studied above. The idea behind this is to address the issue of missing Age values by combining the *Age* and *title* features into a single feature that should still contain some of the signal regarding survival.
+
+For this, we define everyone under 30 or with a title of Master, Miss, or Mlle (Mademoiselle) as *Young*. All the other titles we group into *Not Young*. This is a bit of a generalisation in terms of how Miss and Mrs overlap, but it might be a useful starting point. All the other rare titles (like Don or Lady) have average ages that are high enough to count as Not Young.
+
+
+## Overview
+
+We finish this chapter by visualising the correlations and connection between the original and the engineered features.
+
+First is another correlation plot like we had at the beginning of the "Features relations" section. This time we use the `ggcorr` tool provided by the [`GGally` package](https://cran.r-project.org/web/packages/GGally/index.html), which has better integration into the overall `ggplot2` framework. It also gives us a slightly different set of styling options, like the coordinate flip to make the labels more readable. Here, the stronger correlations have brighter colours in either red (positive correlation) or blue (negative correlation). The closer to white the weaker the correlation:
+
+```{r warning=FALSE, fig.align = 'default', message=FALSE, fig.cap ="Fig. 26", out.width="100%"}
+train %>%
+  select(-PassengerId, -Name, -Ticket, -Cabin, -title_orig) %>%
+  mutate_all(as.numeric) %>%
+  select(everything(), deck) %>%
+  ggcorr(method = c("pairwise","spearman"), label = FALSE, angle = -0, hjust = 0.2) +
+  coord_flip()
+```
+
+We find:
+
+- There are obvious strong correlations between the new engineered features and those from which they were derived; for instance *fclass* and *Fare*. We also see significant coefficients for features that were designed to show complementary view points (e.g. *alone* vs *family*) or a more differentiated view of the same aspect (e.g. *ticket\_group* and *shared\_ticket*).
+
+- Other, more interesting correlations include for instance that the new *ttype* feature is strongly related to *Pclass*, suggesting that *Tickets* were primarily encoded by passenger class. The fact that *family* is correlated to *shared\_ticket* indicates that mostly families travelled on the same *Ticket*. 
+
+
+To examine the strong correlations in more detail there is another useful overview visualisation in the form of a "pairplot", once more realised via `GGally`. This kind of plot provides a more detailed visualisation of the relationships between variables then a simple correlation coefficient. The `ggpairs` tool automatically picks the type of visualisation (barplot, histogram, scatterplot) according to the format of the underlying feature:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.align = 'default', fig.cap ="Fig. 27", fig.height=5.5, out.width="100%"}
+train %>%
+  select(Survived, Pclass, Sex, Age, cabin_known, shared_ticket) %>%
+  mutate(shared_ticket = as.factor(shared_ticket)) %>%
+  ggpairs(ggplot2::aes(colour=Survived))
+```
+
+We find:
+
+- We recover the familiar survival statistics for the important features *Pclass* or *Sex* together with new features such as *cabin\_known* or *shared\_ticket* in one comprehensive overview layout. This is the kind of plot that almost gives you ready-made dashboard for key performance indicators or similarly important features.
+
+- For example, in the right-most column we can go through an almost complete analysis of the new *shared\_ticket* feature. We see its positive impact on the *Survived* status, then realise that sharing a ticket is more likely for female than male passengers or for those in 1st class vs 3rd class. We also find that we are more likely to *know the cabin* of a passenger with a *shared ticket*.
+
+
+A final overview visualisation, before we move on to modelling, is the "alluvial plot". Provided via the new [*ggalluvial* package](https://cran.r-project.org/web/packages/ggalluvial/), those plots are a kind of mix between a flow chart and a bar plot and they show how the target categories relate to various discrete features. In other words: those plots allow us to see the flow of the target between differrent predictor features. See my [blog post](https://heads0rtai1s.github.io/2019/06/06/visuals-alluvial-ggalluvial/) for more details on the plot parameters in comparison to the more established [alluvial](https://cran.r-project.org/web/packages/alluvial/vignettes/alluvial.html) package.
+
+Shout out to [retrospectprospect](https://www.kaggle.com/retrospectprospect) for introducing me to alluvial plots in their very elegant [Titanic EDA kernel](https://www.kaggle.com/retrospectprospect/titanic-machine-learning-from-eda-to-xgb). 
+
+Here is the plot for the 4 features `Pclass`, `Sex`, `shared_ticket`, and `cabin_known`:
+
+```{r warning=FALSE}
+train %>%
+  count(Pclass, Sex, shared_ticket, cabin_known, Survived) %>% 
+  mutate(Pclass = fct_relevel(as.factor(Pclass), c("1","2","3"))) %>% 
+  mutate(shared_ticket = fct_relevel(as.factor(shared_ticket), c("TRUE", "FALSE"))) %>% 
+  mutate(cabin_known = fct_relevel(as.factor(cabin_known), c("FALSE", "TRUE"))) %>% 
+  filter(n >= 20) %>% 
+  ggplot(aes(axis1 = Pclass, axis2 = Sex, axis3 = shared_ticket, axis4 = cabin_known, y = n)) +
+  geom_alluvium(aes(fill = Survived), aes.bind=TRUE, knot.pos = 1/6) +
+  geom_stratum(width = 1/3, fill = "white", color = "black") + 
+  geom_text(stat = "stratum", label.strata = TRUE) +
+  scale_x_discrete(limits = c("Pclass", "Sex", "Shared ticket", "Cabin known"), expand = c(.05, .05)) +
+  labs(y = "Frequency") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+We find:
+
+- The categories Survived (blue) and Not Survived (red) are colour-coded as usual and their frequencies for each feature are connected to adjacent features. We don't show alluvials with less than 20 counts to keep the plot tidy.
+
+- Almost all female passengers in `Pclass` 1 or 2 survived. Those women travelling in class 3 who died were more likely to have a shared ticket, even though the overall percentage of passengers with shared tickets is less than 50%. 
+
+- Similarly, the few male passengers in `Pclass = 3` who survived were somewhat more likely to not share a ticket. Among all of those who did not share a ticket we have almost no surivors for which the cabin is known.
+
+
+---
+
+
+
+To be continued

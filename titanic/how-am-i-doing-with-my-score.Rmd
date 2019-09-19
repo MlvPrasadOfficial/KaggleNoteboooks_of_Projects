@@ -1,0 +1,421 @@
+---
+title: "What's the expected maximum score?"
+date: "`r Sys.Date()`    **What's new in this edition?** Added more comments discussing Title."
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    theme: cosmo
+    highlight: tango
+    code_folding : hide
+---
+
+# Understanding what's the expected maximum score and related questions
+
+**What is the expected maximum score** is an important question that has been
+repeatedly asked. Its answer gives us an idea of how much margin for
+improvement we do have left. The question gets fueled once we see there are many scores
+above ours in the leader board. Although the Titanic dataset is relatively small, it is
+rather difficult to obtain a simple answer for this question due to the following:
+
+1. Complexity of some features that are not simply numerical or categorical such as Name, Ticket, and Cabin.
+2. Features that have a large number of missing values such as Age and Cabin.
+3. Interactions between features. For example [**Ticket can be shown**](https://www.kaggle.com/pliptor/titanic-ticket-only-study) to contain most of the Pclass data. Similarly, [**Name contains most of the Sex data**](https://www.kaggle.com/pliptor/name-only-study-with-interactive-3d-plot).
+
+Since most of us are here to learn, a little bit of some initial work is sufficient to convince us
+that **a score of 1.0 playing fairly is impossible**. The full solution of the Titanic dataset is in public domain.
+Therefore any score is possible. The real question is **what can be done using statistics and machine learning**.
+Is even a score of 0.90 possible at all? 
+
+This is not a **getting started** notebook to solve this problem from begging to end. 
+It is more a collection of observations to help improve your model once you have a good framework in place. In other words,
+it is helpful if you have already covered EDA and modeling techniques with tuning by means of cross validation. 
+
+This is a work permanent in progress. I will try to report scores with given recipes.
+We may be inclined to think we need more complex models or more complicated techniques to
+improve the score. While that might be true to obtain the last decimal values on the score, I think it is
+also important to **understand how the score goes up starting with simple solutions**. What differences between 
+makes the score go up? We will start
+with the simplest "**All-dead**" submission. At the learning stage, it is probably particularly important to go over the
+simpler approaches before examining the high scoring ones.  
+
+A good approach for this problem and in general for any competition at Kaggle is to
+have a solid [cross-validation scheme.](https://en.wikipedia.org/wiki/Cross-validation_(statistics))
+It is meant to help you properly tune your model and estimate what public/private score you may get. Many titanic kernels follow
+this principled approach but public scores are typically lower than the cross-validation scores. It is not unusual that the cross validation
+score is off from public scores in competitions. The simple case of a [**complete gender-only study**](https://www.kaggle.com/pliptor/optimal-titanic-for-gender-only-0-7655)
+demonstrates that there will be a tendency to overestimate the public score when gender is a major
+contributor in your solution. The overestimation is as much as 2%. Therefore the understanding of this simple case is important
+for explaining potential discrepancies between the cross-validation score and public score.
+This is a little bit more elaborated in the sections below.
+The general consensus to is pay less attention the absolute values. Instead, it is best to look if trending up in cross validation is followed by the same in the public score. Maximizing the cross-validation, even when done "properly" may not
+be the best strategy for maximization of the private score, which is the ultimate goal in competitions.
+
+A similar conclusion for a lower public score bias can be obtained when
+[**Pclass-only is
+examined**](https://www.kaggle.com/pliptor/optimal-titanic-for-pclass-only-0-65550/output),
+which is also another strong predictor. We therefore have at least two strong predictors that overestimate
+public scores.
+
+There is some overlapping with the [Divide and
+Conquer](https://www.kaggle.com/pliptor/divide-and-conquer-0-82296)  kernel but
+the idea is to get some new ideas here. 
+
+## **Summary Table Given Strategies and Public Scores **
+
+While this is mostly to help beginners as a rough compass, it may be refreshing
+to have a glance on this table even for those that have worked on this dataset
+with some detail.  For example, I was never convinced using the Cabin feature
+would give a significant boost in the score (and I'm still not sure). However,
+[CalebCastleberry](https://www.kaggle.com/ccastleberry) demonstrates we can
+obtain a public score better than All-dead or Passenger-class only by carefully
+dissecting the Cabin feature and using it as the sole feature. [Frederik
+Hasecke](https://www.kaggle.com/frederikh) engineers a non-trivial ethnicity
+feature. Might it boost the accuracy of your model? I haven't had a chance to
+try it yet.
+
+Try to figure out what runs common among those scoring above 0.82. 
+
+Let me know if you find original features or methods that are not commonly found!
+
+---
+
+* 0.62679 All-dead submission:  The simplest strategy of guessing that all died since the majority died.
+* [0.65550](https://www.kaggle.com/pliptor/optimal-titanic-for-pclass-only-0-65550) Passenger-class only.
+* [0.675](https://www.kaggle.com/ccastleberry/titanic-cabin-features/notebook) Cabin-only:  This is a remarkable notebook by [CalebCastleberry](https://www.kaggle.com/ccastleberry).
+* [0.71291](https://www.kaggle.com/pliptor/titanic-ticket-only-study) Ticket-only using KNN.
+* [0.76555](https://www.kaggle.com/pliptor/optimal-titanic-for-gender-only-0-7655) Gender-only.
+* 0.76555 Gender + Passenger-class (Identical as Gender-only).
+* [0.77990](https://www.kaggle.com/pliptor/minimalistic-xgb) Gender + Class + Embarked  XGBoost in R.
+* [0.77990](https://www.kaggle.com/pliptor/minimalistic-titanic-in-python-lightgbm) Gender + Class + Embarked  LightGBM in Python.
+* [0.77990](https://www.kaggle.com/wayne999/a-simple-genetic-programming/code) Using genetic programming by [Yan Wang](https://www.kaggle.com/wayne999) Short and neat complete genetic programming code (it is suboptimal since the Name feature is not used).
+* [0.78468](https://www.kaggle.com/pliptor/name-only-study-with-interactive-3d-plot) Name-only text vectorization and PCA with a 3D interactive plot.
+* [0.78947](https://www.kaggle.com/pliptor/titanic-in-python-svm) Gender + Class + Embarked + Age using SVM
+* [0.78947](https://www.kaggle.com/yildirimarda/decision-tree-visualization-submission) Gender + Class + FamilySize + Age using Decision Tree by [Arda Yildirim](https://www.kaggle.com/yildirimarda)
+* [0.79904](https://www.kaggle.com/rafaelvleite/titanic-artificial-neural-network-80-score) Neural network (keras)  by [Rafael Vicente Leite](https://www.kaggle.com/rafaelvleite).
+* [0.79904](https://www.kaggle.com/frederikh/12-500-feet-under-the-sea) Using ethnicity feature by [Frederik Hasecke](https://www.kaggle.com/frederikh).
+
+---
+
+* [0.80382](https://www.kaggle.com/bwboerman/a-quick-dive-into-h2o-with-python) Using H2O by [Bart Boerman](https://www.kaggle.com/bwboerman)
+* [0.80861](https://www.kaggle.com/arthurtok/0-808-with-simple-stacking/output) Simple stacking by [Anisotropic](https://www.kaggle.com/arthurtok) stacking is ubiquitous in competitions.
+* [0.80861](https://www.kaggle.com/nicapotato/titanic-voting-pipeline-stack-and-guide) Voting/ensembling  by [Nick Brooks](https://www.kaggle.com/nicapotato) An impressive number of models is packed in almost one hour of running time!
+* [0.80861](https://www.kaggle.com/chucktalbert/titanic-a-tidy-caret-approach-0-8086) Tidy + Caret, KNN impute and Random Forests optimizer by [Chuck Talbert](https://www.kaggle.com/chucktalbert)
+* [0.80861](https://www.kaggle.com/reisel/iterative-prediction-of-survival) Iterative Prediction of Survival by [Reinhard](https://www.kaggle.com/reisel)
+* [0.80861](https://www.kaggle.com/njmei42/kaggle-titanic-with-tensorflow/notebook) Kaggle Titanic with Tensorflow by [nme-42](https://www.kaggle.com/njmei42) It is quite an interesting kernel.
+* [0.81339](https://www.kaggle.com/jack89roberts/titanic-using-ticket-groupings) Titanic Using Ticket Grouping by [Jack Roberts](https://www.kaggle.com/jack89roberts). 
+* [0.81339](https://www.kaggle.com/c/titanic/discussion/6821) Random Forests: A great tutorial by [Trevor Stephens](https://www.kaggle.com/trevorstephens)
+
+---
+
+* [0.82296](https://www.kaggle.com/pliptor/divide-and-conquer-0-82296) Divide and Conquer. 
+* [0.82296](https://www.kaggle.com/bisaria/titanic-lasso-ridge-implementation) Lasso Ridge by [Bisaria](https://www.kaggle.com/bisaria) 
+* [0.82296](https://www.kaggle.com/cdeotte/titanic-using-name-only-0-81818) Titanic using Name only [Chris Deotte](https://www.kaggle.com/cdeotte) achieves this great score using nothing but the Name feature! (Note from his kernel: 0.81818 with Name only and 0.82296 by adding Ticket). 
+* [0.82296](https://www.kaggle.com/cdeotte/titanic-deep-net-0-82296) Titanic Deep Net by [Chris Deotte](https://www.kaggle.com/cdeotte)] 
+* [0.82775](https://www.kaggle.com/francksylla/titanic-machine-learning-from-disaster) [Frank Sylla](https://www.kaggle.com/francksylla) engineers
+several features.
+* [0.83253](https://www.kaggle.com/konstantinmasich/titanic-0-82-0-83/notebook) [Konstantin](https://www.kaggle.com/konstantinmasich) brings
+attention to feature scaling, which is essential when working with the kNN algorithm.
+* [0.84210](https://www.kaggle.com/cdeotte/titantic-mega-model-0-84210) Titanic Mega Model [Chris Deotte](https://www.kaggle.com/cdeotte) ensembles Kaggle's top 6 models. It starts with a neat ensembling diagram.
+* [0.84688](https://www.kaggle.com/cdeotte/titanic-wcg-xgboost-0-84688) Titanic WCG+XGBoost [Chris Deotte](https://www.kaggle.com/cdeotte) Is this the ultimate Titanic model? 
+
+---
+
+# Have you thought about these questions?
+
+```{r}
+rm(list = ls())
+library(data.table)
+library(ggplot2)
+suppressMessages(library(dplyr))
+suppressMessages(library(gridExtra))
+
+# read raw data
+train  <- read.csv("../input/train.csv");
+test   <- read.csv("../input/test.csv");
+# Join the test and train sets for joint pre-processing of features
+# Create an indicator tag for train and test sets
+test$Survived <- NA;
+test$Set  <- "Test";
+train$Set <- "Train";
+comb <- rbind(train, test);
+```
+
+***
+## Since roughly 75% of females survived and roughly only 20% of males survived, what's the score when you guess all females survived and all males perished?
+
+The score [for Gender-only analysis is
+0.76555](https://www.kaggle.com/pliptor/optimal-titanic-for-gender-only-0-7655).
+**A solid improvement of almost 14% over guessing everyone perished**.  This
+demonstrates how influential Gender is a predictor for survival (in addition to the
+correlation table that follows below). Therefore, it is reasonable to assume
+that any solution that somehow favors Gender as predictor would carry the findings of this
+script, which is **optimal** for this restriction of using only Gender as predictor. We can guarantee it is optimal because
+only one binary predictor is used and no stochastic algorithm (an algorithm that depends on random number generators) is necessary to solve it.
+The script simply computes statistics after normalizing the ratio of females to
+males in the train and test sets. The public score predicted by the script is 78.60%. Yet,
+the obtained public score is 76.56%. In simple terms, there is evidence that more passengers in the public test
+set died compared to the train set when only Gender as predictor is considered. This demonstrates this fact at least for this strong predictor,
+there is a bias for predicting lower public scores of as much as 2%. 
+
+The bias might diminish (or increase) once all predictors are considered.
+However, the precise amount of bias become much more difficult to compute. 
+
+We may also compute and chart the correlation between **Sex** and **Survived**. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+abs(cor.test(as.numeric(train$Sex), as.numeric(train$Survived))[[4]])
+```
+
+A correlation of 0.54 shows **Sex** carries a lot of information about **Survived**.
+
+We may compute the mutual correlation between all variables in one shot like this.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# first we convert the features of interest to numeric
+library(corrplot)
+df <- train %>% dplyr::select(Survived, Sex, Pclass, Fare, Embarked, SibSp, Parch)
+df$Sex <- as.numeric(df$Sex)
+df$Embarked <- as.numeric(df$Embarked)
+corrplot(cor(df), type ='upper', method ='ellipse', tl.pos ='tp')
+corrplot(cor(df), type ='lower', method ='number', add = T, col='black', cl.pos='n',diag=F)
+```
+
+We see then **Pclass (0.34)** and **Fare (0.26)** are the next features that
+correlate with **Survived** (ignoring signs as we are looking at intensities).
+However, **Fare** and **Pclass** are very much correlated at (0.55) as we may
+expect. Therefore if we use **Pclass** as feature, we may not gain as much
+using **Fare** as a feature. It is possible **Embarked** is more helpful than
+**Fare** if we are already using **Pclass**.
+
+Note we haven't included other features in the correlation table yet.
+
+***
+## What is the optimal score one can obtain by only using passenger class information?
+
+The score is [0.6550](https://www.kaggle.com/pliptor/optimal-titanic-for-pclass-only-0-65550/code) Not as good as using gender feature but better than the "All-dead"
+
+The result may also be expected from the correlation values.
+
+Note we are only considering **Pclass** as feature and nothing else. We also conclude from the study that the Pclass feature causes an overestimation of the public score, much in the same way as the gender (Sex) feature.
+
+***
+## Does it help to use both gender and passenger class information?
+
+No, using naive Bayes classifier, the prediction is exactly the same as for gender only. This means that in each of the passenger classes the trumping rule still prevailed: females survive, males perish.
+
+```{r, message=FALSE, warning=FALSE}
+p <- list();
+item <- 1;
+ylim <- 300;
+for(class in c(1:3)){
+        for(sex in c("male", "female")) {
+                p[[item]] <- ggplot(comb %>% dplyr::filter(Set=="Train", Pclass==class, Sex==sex), aes(x=Survived)) + geom_bar(aes(fill=Survived)) + scale_y_continuous(limits=c(0,ylim)) + theme(legend.position="none") + labs(title=paste('Pclass=', as.character(class), sex));
+                item <- item + 1;
+        }
+}
+print(do.call(grid.arrange, p))
+```
+
+The above graph has very important messages though. 
+
+1. High accuracy predictions can be made from four out of six combinations of Pclass and  Gender. 
+2. The toughest prediction is for females in Pclass=3. 
+3. The second toughest prediction is males in Pclass=1.
+
+We believe a very high score becomes impractical because of 2 and 3. 
+
+Note we are only considering **Pclass** and **Sex** and nothing else. The analysis may change by including other variables. 
+
+***
+## What about adding **Embarked** on top?
+
+Gender + Class + Embarked does make a difference! The public score is [**0.77990**](https://www.kaggle.com/pliptor/minimalistic-xgb) just using XGBoost. Special
+thanks to [Esteban Cortero](https://www.kaggle.com/estebancortero) for pointing out that this score is not achievable with the naive Bayes algorithm. Naive Bayes assumes
+the input features are independent and this might be making it suboptimal. I also tried with random forest and SVM and they all converge to a score of 0.77990. 
+
+Note only **Sex** + **Pclass** and **Embarked** and nothing else are considered here.
+
+***
+## Typical kernels engineer the so called "Title" feature. Is it important? 
+
+If you remove Title from your own model and the score drops, then it is probably important to your model. Another
+thing to consider is if all titles are equally important. For example, you may want to experiment by testing if cross validation and public scores are affected by merging 'Miss' and 'Mrs'. 
+
+***
+## Is the Age feature important?
+
+The next chart shows that Age might be a valuable piece of information for those in Pclass 1 and 2 because most of those passengers have reported ages. In contrast, passengers in Pclass 3 have a significant fraction of its population without age. Therefore modeling of Age in Pclass 3 becomes significantly more difficult and subject to noise.
+
+```{r}
+ggplot(comb %>% dplyr::filter(), aes(Pclass,fill=!is.na(Age))) + geom_bar(position="dodge") + labs(title="Passenger Has Age",fill="Has Age") 
+```
+
+If we then focus on Pclass 1 and Pclass 2, the next plot shows the age band for younger than around 14 is highly indicative for survival. One may argue that between the ages of 14 and 65 there is little information about survival. Also, despite the band age between 65 to 75 shows survival is unfavorable it is not very informative as most passengers did not survive to begin with. 
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(comb %>% dplyr::filter(Set=="Train", Pclass!=3), aes(Age)) + geom_density(alpha=0.5, aes(fill=factor(Survived))) + labs(title="Survival density per Age for Pclass 1 and 2")
+```
+
+[**YLT0690**](https://www.kaggle.com/ylt0609) tackled this problem with more detail in this [**kernel**](https://www.kaggle.com/ylt0609/3-strategies-analyzing-age-and-their-impact).
+
+In my [**Divide and Conquer**](https://www.kaggle.com/pliptor/divide-and-conquer-0-82296) kernel I create the **Minor** feature. It is defined
+to be those under 14 in Pclass 1 and 2. All other Age data is then discarded. Pragmatically, if the motto was "if you are women or children you may go" then I think it really didn't matter if you were, say, in your twenties, thirties or forties. 
+
+
+***
+## Is a cabin-only kernel possible?
+I found a remarkable
+[notebook](https://www.kaggle.com/ccastleberry/titanic-cabin-features/notebook)
+by [CalebCastleberry](https://www.kaggle.com/ccastleberry) He achieves a public
+score of 0.675. It is therefore better than the trivial All-dead submission and
+Passenger-class only. 
+
+***
+## Is a Ticket-only kernel possible?
+
+This was inspired by Caleb's cabin-only work on single feature exploration. The ticket feature
+happens to contain most of the Pclass information. Check the first digit of the numeric portion and also
+the alpha-numeric prefix. Therefore we expected to get a better score
+than a Pclass-only kernel (0.65550). In [**this kernel**](https://www.kaggle.com/pliptor/titanic-ticket-only-study) we show a public score of 0.71291 
+can be obtained by just exploring the ticket feature.
+
+# More questions
+
+In this section I'll note some ideas I found worth investigating.
+
+## Can ethnicity be used?
+
+The extraction of this feature from names requires some work and is not often found in kernels. I just found it used [**here**](https://www.kaggle.com/frederikh/12-500-feet-under-the-sea) by [Frederik Hasecke](https://www.kaggle.com/frederikh)
+
+## Is the length of the name field a legitimate feature?
+
+Once I saw the length of the name field being used as a feature. Is it legitimate? Let us compute
+its correlation with Survived:
+
+```{r echo=FALSE}
+comb$NameLength <- apply(comb %>% dplyr::select(Name),1,nchar)
+cor.test(comb[comb$Set=='Train',]$NameLength, comb[comb$Set=='Train',]$Survived)[[4]]
+```
+They are indeed positively correlated. Why? The reason is because we know females have greater chance of survival
+and married females have longer name fields because they include maiden names:
+
+```{r}
+head(comb[ comb$NameLength>40&comb$Set=='Train', ] %>% dplyr::select(Survived,NameLength,Name),10)
+```
+
+It is likely that for this dataset parsing the Name field for 'Mrs.' might be
+more effective. However, we can't say at all that this feature is not
+legitimate. In addition to the argument so far, one may argue that the more
+letters the more information the row might contain. Indeed, it does contain
+information of who has spouses and who they are. That might help guide the
+machine learning optimizer to determine which rows may contain more information
+than others. Also, in some competitions, features are anonymized; in those cases we must
+resort to creative forms of feature engineering.
+
+## Can we try to just use the Name feature?
+
+Since we can tell gender from the titles in the Name field, we may expect that
+using only the Name field potentially does no worse than the gender-only solution.
+In [this kernel](https://www.kaggle.com/pliptor/name-feature-vectorization),
+just the name feature is used to predict Survived. The Name feature is first
+transformed into a numerical vector by counting the word frequencies. It does
+indeed produce a public score of 0.78468, which is almost a full 2% better than the 0.76555 score
+obtained with a gender-only approach. You may want to check the [interactive name vector space
+over there](https://www.kaggle.com/pliptor/name-only-study-with-interactive-3d-plot). Observe in this 
+snapshot that cluster of survival and death can be extracted by just looking at the Name feature and nothing else.
+
+![Titanic name feature vector space](https://kaggle2.blob.core.windows.net/forum-message-attachments/281004/8555/newplot.png)
+
+You may also want to check [**Chris Deotte**](https://www.kaggle.com/cdeotte)'s [**kernel**](https://www.kaggle.com/cdeotte/titanic-using-name-only-0-81818). He achieves 0.81818 with Name only and a much simpler approach.
+He then gets 0.82296 by adding Ticket data. Does it mean we are trying to glean data from the other features that are really largely irrelevant for the problem at task?
+
+## Can we use artificial neural networks?
+
+It seems that tree-based approaches are easier with this data set. However,
+[nme-42](https://www.kaggle.com/njmei42) has a [**tensorflow approach**](https://www.kaggle.com/njmei42/kaggle-titanic-with-tensorflow/notebook) that is very nice scoring above 0.80. Another very impressive tensorflow [**notebook**](https://www.kaggle.com/raoulma/titanic-survival-class-79-90-test-acc) by [Raoul](https://www.kaggle.com/raoulma) is also worth looking. Both use tensorflow but in entirely different ways.
+nme-42 uses a tensorflow DNN macro while Raoul crafts a fairly complex network using low-level blocks.
+
+[Chris Deotte](https://www.kaggle.com/cdeotte) achieves [0.82296](https://www.kaggle.com/cdeotte/titanic-deep-net-0-82296) by adding two features not found in typical Titanic neural network
+kernels. I think that's the key.
+
+## Can we use genetic programming to solve the problem?
+
+Sure, it is just another optimization technique. [Yan Wang](https://www.kaggle.com/wayne999) has a [**sample code**](https://www.kaggle.com/wayne999/a-simple-genetic-programming/code) that teaches how it can be done.  
+
+## Can we use the kNN algorithm to solve this problem?
+
+kNN requires that the features are properly scaled. If you leave features with large dynamic ranges such as Age and Fare as they are, kNN will weight more towards them. And yet, we know that in this problem gender is a far more important feature. [Konstantin](https://www.kaggle.com/konstantinmasich) has a high-scoring (0.83253) [kernel](https://www.kaggle.com/konstantinmasich/titanic-0-82-0-83/notebook) using kNN but he also performs careful feature scaling.
+
+# Miscellaneous
+
+## Should I combine train and test data for imputation of missing data?
+
+This is a frequently asked question. It can be also contentious if one argues that anything that carries the label "test" must not be used during the training of a model. Let's examine with a small example. It is similar to the Titanic problem in which the only unknowns to the modeler are the NAs. Note that if we fill the NAs in train and test separately, your model misses the opportunity to learn that:
+
+A) Orange is a fruit.
+B) Apple is likely edible because it is a fruit.
+
+<pre><code>
+--- Train
+edible(target)   type       sub_type 
+1                vegetable  NA
+1                NA         orange
+0                tool       hammer
+0                furniture  table
+--- Test
+NA               vegetable  tomato
+NA               fruit      orange
+NA               fruit      apple 
+NA               tool       NA
+NA               NA         table
+</code></pre>
+
+However, if you are dealing with a problem in which only the Train file is given to you and the Test file is entirely hidden, then you have no choice but to work with only the Train file. For the Titanic problem, the bottom line is that you may choose to do the imputation jointly or in separate but your model (and consequently score) is likely to be higher by performing a joint imputation because you have more (and not less) information about the problem to work with.
+
+## How are the public score and private scores computed?
+
+The complete data has 1309 passengers. There are 891 passengers in the train set and 418 passengers in the test set, respectively. 
+
+The test set of 418 passengers is divided equally into to a public set consisting of 209 passengers and the remaining 209 into the private set. The public score is simply the percentage of accuracy on the public set. Each correct guess for passenger survival corresponds to 1/209=0.004784689 points. An accuracy better than 80% means therefore 168 correct guesses out of 209. The private score is computed similarly. The public and private test sets are fixed and they do not change until the competition is over on April 6, 2020. At that time, the private score, the ultimate score would be disclosed.
+
+Many competitions at Kaggle follow a similar structure. The main differences being the sizes of the public and private sets with respect to the train data. Typically the public set is smaller than the private set unlike in the Titanic with 50% split between public and private.
+
+## Where can we learn about cross validation?
+
+Cross validation is an indispensable tool for tuning your model and estimating performance of your model on unseen data. While there are quick ways to set it up, it is a science in itself not to be taken lightly in competitions. Often there are discussions about how to set cross validation taylored to a particular type of data/competition.
+
+Kaggle has a tutorial [**kernel here**](https://www.kaggle.com/dansbecker/cross-validation/notebook). Also, I wrote this [**notebook**](https://www.kaggle.com/pliptor/strategies-for-estimating-a-model-performance) for advanced controlled experimentation, which also includes references on this topic. 
+
+## Why cross validation in this problem seems to be always higher than the public score?
+
+See question 2.1.
+
+## Are there errors in the data set?
+
+The data set appears to contain some errors. If you think you might be able to carve another extra point by fixing them you might want to be aware of those. Be mindful though that some of these fixes require confirmation from historical data. Kaggle
+typically have policies regarding how and what external data might be used in competitions.
+
+[Erik Bruin](https://www.kaggle.com/erikbruin) did a very extensive study on [**family relations**](https://www.kaggle.com/erikbruin/titanic-2nd-degree-families-and-majority-voting). He finds that
+the Davies family has inconsitencies in SibSp/Parch (details in section 4.4.2 in version 33 of his kernel)
+
+[André Alcântara](https://www.kaggle.com/araraonline) found discrepancies in [**SibSp/Parch**](https://www.kaggle.com/c/titanic/discussion/39787)
+
+[MarcelFlygare](https://www.kaggle.com/flygare) found discrepancies in [**Ticket/Fare values**](https://www.kaggle.com/c/titanic/discussion/49883)  
+
+[Reihard](https://www.kaggle.com/reisel) finds that William Ford (id 87) can not be 16 as he as a child of age 21. The correct name of Mrs. William Skoog (168) should be Mrs. Wilhelm Skoog, as the name of her husband is Wilhelm. More details are available in section 4.1 of this [**kernel**](https://www.kaggle.com/reisel/save-the-families)
+
+## Why are there duplicate ticket values?
+
+People that travelled together often had the same ticket values. Let's make a histogram of
+duplicate tickets
+
+```{r}
+tmul <- data.table(table(comb$Ticket))
+hist(tmul$N, 20, xlab="number of duplications", main="Histogram of Duplicate Tickets")
+```
+
+We see that around 700 passengers had unique ticket numbers but the remaining shared their ticket number with others. This is a good feature to be explored since it is natural that the fate of passengers the travelleled together is expected to be correlated.
+
+

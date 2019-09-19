@@ -1,0 +1,527 @@
+---
+title: 'Beginners Titanic'
+author: 'Swamy S M'
+date: '17th Sep 2017'
+
+---
+
+# Introduction
+
+ Titanic is definitely good kick-up for any Machine Learning enthusiast as it containes few feauter and 
+More than that who don't know Titanic Tragedy, Jack and Rose Love story.
+Titanic is the tragedy story of a ship Sunk in the first Journey itself. 
+This is the best example of what is going to happen if the nature gives just an hour to human being before his death and survival,
+
+1) Whether he try to save himself first or the family or children?
+2) Priority goes to rich folks or poor, who among poor folks survive first?
+3) Smaller Family having better Survival rate than bigger?
+
+With Above explanation Lets start the script 
+
+
+#Data loading and consolidation
+
+```{r, message = FALSE}
+## Load all the library required one by one
+
+library('ggplot2') 
+library('caret') 
+library('dplyr') 
+library('randomForest') 
+library('rpart')
+library('rpart.plot')
+library('car')
+library('e1071')
+
+
+##Lets Load raw data in the orginal form by setting stringsAsFactors = F
+
+train.tit <- read.csv('../input/train.csv', stringsAsFactors = F)
+test.tit  <- read.csv('../input/test.csv', stringsAsFactors = F)
+test.tit$Survived <- NA
+
+##Combine both test and train
+full_titanic <- rbind(train.tit, test.tit)
+
+##Check the structure
+str(full_titanic)
+```
+
+#Missing value imputation
+
+```{r, message=FALSE, warning=FALSE}
+
+###is there any Missing obesrvation
+colSums(is.na(full_titanic))
+
+####Empty data
+colSums(full_titanic=='')
+
+##Summary shows, Age missing 263 value, Cabin too having lot of missing value and embarked just 2
+
+###Lets replace Embarked by most frequest observation 
+
+table(full_titanic$Embarked)
+full_titanic$Embarked[full_titanic$Embarked==""]="S"
+table(full_titanic$Embarked)
+
+##As Age and Cabin has too many missing value, will check it during analysis Phase
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+###Check the length and see how many varibles of them we can move to factor for our analysis
+
+apply(full_titanic,2, function(x) length(unique(x)))
+
+
+###will convert the below varible into factor for ananlysis
+
+cols=c("Survived","Pclass","Sex","Embarked")
+for (i in cols){
+  full_titanic[,i]=as.factor(full_titanic[,i])
+}
+```
+
+#Exploratory analysis and Feature engineering
+
+
+##Exploratory Analysis on Pclass
+
+```{r, message=FALSE, warning=FALSE}
+## Hypothesis is that,  Rich folks survival rate is much better than poor folks, Does any diffrence in the Titanic?  
+
+###Visualize P class which is the best proxy for Rich and Poor  
+
+ggplot(full_titanic[1:891,],aes(x = Pclass,fill=factor(Survived))) +
+geom_bar() +
+ggtitle("Pclass v/s Survival Rate")+
+xlab("Pclass") +
+ylab("Total Count") +
+labs(fill = "Survived")  
+
+##No diffrences in the Titanic too, First class Survival rate is far more better than the 3rd class  
+##No doubt Rich peope having better Survival rate than the poor
+
+# Visualize the 3-way relationship of sex, pclass, and survival
+ggplot(full_titanic[1:891,], aes(x = Sex, fill = Survived)) +
+geom_bar() +
+facet_wrap(~Pclass) + 
+ggtitle("3D view of sex, pclass, and survival") +
+xlab("Sex") +
+ylab("Total Count") +
+labs(fill = "Survived")
+
+##In the all the class female Survival rate is better than Men
+
+```
+
+##Exploratory Analysis on Title
+
+```{r, message=FALSE, warning=FALSE}
+head(full_titanic$Name)
+##Lets extract the title and check if we have predictive power in that
+names <- full_titanic$Name
+title <-  gsub("^.*, (.*?)\\..*$", "\\1", names)
+
+full_titanic$title <- title
+
+table(title)
+
+###MISS, Mrs, Master and Mr are taking more numbers
+
+###Better to group Other titles into bigger basket by checking gender and survival rate to aviod any overfitting
+
+
+full_titanic$title[full_titanic$title == 'Mlle']        <- 'Miss' 
+full_titanic$title[full_titanic$title == 'Ms']          <- 'Miss'
+full_titanic$title[full_titanic$title == 'Mme']         <- 'Mrs' 
+full_titanic$title[full_titanic$title == 'Lady']          <- 'Miss'
+full_titanic$title[full_titanic$title == 'Dona']          <- 'Miss'
+
+## I am afraid creating a new varible with small data can causes a overfit
+## However, My thinking is that combining below feauter into original variable may loss some predictive power as they are all army folks, doctor and nobel peoples 
+
+full_titanic$title[full_titanic$title == 'Capt']        <- 'Officer' 
+full_titanic$title[full_titanic$title == 'Col']        <- 'Officer' 
+full_titanic$title[full_titanic$title == 'Major']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'Dr']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'Rev']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'Don']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'Sir']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'the Countess']   <- 'Officer'
+full_titanic$title[full_titanic$title == 'Jonkheer']   <- 'Officer'
+
+
+# Lets check who among Mr, Master, Miss having a better survival rate
+ ggplot(full_titanic[1:891,],aes(x = title,fill=factor(Survived))) +
+  geom_bar() +
+  ggtitle("Title V/S Survival rate")+
+  xlab("Title") +
+  ylab("Total Count") +
+  labs(fill = "Survived") 
+
+##In the titanic you are Mr then there is less chance of survival, Miss and Mrs having better survival rate then Master and Officer 
+
+
+### Visualize the 3-way of relationship of Title, Pclass, and Survival
+
+ggplot(full_titanic[1:891,], aes(x = title, fill = Survived)) +
+  geom_bar() +
+  facet_wrap(~Pclass) + 
+  ggtitle("3-way relationship of Title, Pclass, and Survival") +
+  xlab("Title") +
+  ylab("Total Count") +
+  labs(fill = "Survived")
+
+##Master in 1st and 2nd class has 100% Survival where has Mrs and Miss having 90% chance of Survival in 1st and 2nd class 
+##Since Title mostly depending on Age (except few cases), I will use title in place of age which has 263 missing observation
+```
+
+##Exploratory Analysis on Family
+
+```{r, message=FALSE, warning=FALSE}
+
+# Lets create a Family size using Sibsp and Parch
+
+full_titanic$FamilySize <-full_titanic$SibSp + full_titanic$Parch + 1
+
+full_titanic$FamilySized[full_titanic$FamilySize == 1]   <- 'Single'
+full_titanic$FamilySized[full_titanic$FamilySize < 5 & full_titanic$FamilySize >= 2]   <- 'Small'
+full_titanic$FamilySized[full_titanic$FamilySize >= 5]   <- 'Big'
+
+full_titanic$FamilySized=as.factor(full_titanic$FamilySized)
+
+
+###Lets Visualize the Survival rate by Family size 
+ggplot(full_titanic[1:891,],aes(x = FamilySized,fill=factor(Survived))) +
+  geom_bar() +
+  ggtitle("Family Size V/S Survival Rate") +
+  xlab("FamilySize") +
+  ylab("Total Count") +
+  labs(fill = "Survived")
+
+###Big Family in Titanic having worst survival rate then Smaller and Alone
+
+####Why Big Family has a probelm?, Check in the below visualization
+
+ggplot(full_titanic[1:891,], aes(x = FamilySized, fill = Survived)) +
+  geom_bar() +
+  facet_wrap(~title) + 
+  ggtitle("3D View of Fmily Size, Title and Survival rate") +
+  xlab("family.size") +
+  ylab("Total Count") +
+  ylim(0,300) +
+  labs(fill = "Survived")
+
+##You are a Master in the Big Family your Survival rate is absolutely nill even though overall survival rate of master is very good
+
+###I am very surprised to see Single coming out to be bulk, however there is chance that, they could come with friends or servants
+##I though to extract those unique number using same ticket number distributed.
+
+
+##Engineer features based on all the passengers with the same ticket
+ticket.unique <- rep(0, nrow(full_titanic))
+tickets <- unique(full_titanic$Ticket)
+
+for (i in 1:length(tickets)) {
+  current.ticket <- tickets[i]
+  party.indexes <- which(full_titanic$Ticket == current.ticket)
+  
+  
+  for (k in 1:length(party.indexes)) {
+    ticket.unique[party.indexes[k]] <- length(party.indexes)
+  }
+}
+
+full_titanic$ticket.unique <- ticket.unique
+
+
+full_titanic$ticket.size[full_titanic$ticket.unique == 1]   <- 'Single'
+full_titanic$ticket.size[full_titanic$ticket.unique < 5 & full_titanic$ticket.unique>= 2]   <- 'Small'
+full_titanic$ticket.size[full_titanic$ticket.unique >= 5]   <- 'Big'
+
+##Lets check the Ticket size through grpah
+ggplot(full_titanic[1:891,],aes(x = ticket.size,fill=factor(Survived))) +
+  geom_bar() +
+  ggtitle("ticket.Size VS Survival")+
+  xlab("ticket.size") +
+  ylab("Total Count") +
+  labs(fill = "Survived")
+
+##Lets check the Ticket and title size through grpah
+ggplot(full_titanic[1:891,], aes(x = ticket.size, fill = Survived)) +
+  geom_bar() +
+  facet_wrap(~title) + 
+  ggtitle("3D View of Ticket, Title and Survival rate") +
+  xlab("ticket.size") +
+  ylab("Total Count") +
+  ylim(0,300) +
+  labs(fill = "Survived")
+  
+##We can't see huge diffrence b/w ticket size and Family Size, May be we will use any one of them which is contributing more
+```
+  
+##Exploratory Analysis on Embarked
+
+```{r, message=FALSE, warning=FALSE}
+
+###is there any association between Survial rate and where he get into the Ship.   
+ ggplot(full_titanic[1:891,],aes(x = Embarked,fill=factor(Survived))) +
+  geom_bar() +
+  ggtitle("Embarked vs Survival") +
+  xlab("Embarked") +
+  ylab("Total Count") +
+  labs(fill = "Survived") 
+
+##Lets further divide the grpah by Pclass
+ggplot(full_titanic[1:891,], aes(x = Embarked, fill = Survived)) +
+  geom_bar() +
+  facet_wrap(~Pclass) + 
+  ggtitle("Pclass vs Embarked vs survival") +
+  xlab("Embarked") +
+  ylab("Total Count") +
+  labs(fill = "Survived")
+
+##Haha..I don't think there is a correlation between Survival rate and Embarked 
+
+##There is a lot of Missing value in Cabin, i dont think its good idea to use that
+##As mentioned earlier will use Title inplace of Age 
+##Fare is definitelly correlate with Pclass..so i am not going to use that too
+
+full_titanic$ticket.size <- as.factor(full_titanic$ticket.size)
+full_titanic$title <- as.factor(full_titanic$title)
+
+##From the Explortory anlysis part we have decided to use below variables for our model building 
+
+##"Pclass", "title","Sex","Embarked","FamilySized","ticket.size"
+
+##Any redaundant varible among above will drop in the course of analysis
+
+```
+
+#Divide data into train and set for internal validation
+
+```{r, message=FALSE, warning=FALSE}
+
+###lets prepare and keep data in the proper format
+
+feauter1<-full_titanic[1:891, c("Pclass", "title","Sex","Embarked","FamilySized","ticket.size")]
+response <- as.factor(train.tit$Survived)
+feauter1$Survived=as.factor(train.tit$Survived)
+
+
+###For Cross validation purpose will keep 20% of data aside from my orginal train set
+##This is just to check how well my data works for unseen data
+set.seed(500)
+ind=createDataPartition(feauter1$Survived,times=1,p=0.8,list=FALSE)
+train_val=feauter1[ind,]
+test_val=feauter1[-ind,]
+
+####check the proprtion of Survival rate in orginal training data, current traing and testing data
+round(prop.table(table(train.tit$Survived)*100),digits = 1)
+round(prop.table(table(train_val$Survived)*100),digits = 1)
+round(prop.table(table(test_val$Survived)*100),digits = 1)
+
+
+```
+#Predictive Analysis and Cross Validation
+
+##Decison tree
+
+```{r, message=FALSE, warning=FALSE}
+
+##Random forest is for more better than Single tree however single tree is very easy to use and illustrate
+set.seed(1234)
+Model_DT=rpart(Survived~.,data=train_val,method="class")
+
+
+rpart.plot(Model_DT,extra =  3,fallen.leaves = T)
+
+###Surprise, Check out the plot,  our Single tree model is using only Title, Pclass and Ticket.size and vomited rest
+###Lets Predict train data and check the accuracy of single tree
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+
+PRE_TDT=predict(Model_DT,data=train_val,type="class")
+confusionMatrix(PRE_TDT,train_val$Survived)
+
+#####Accuracy is 0.8375
+####Not at all bad using Single tree and just 3 feauters
+
+##There is chance of overfitting in Single tree, So I will go for cross validation using '10 fold techinque'
+set.seed(1234)
+cv.10 <- createMultiFolds(train_val$Survived, k = 10, times = 10)
+
+# Control
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 10,
+                       index = cv.10)
+
+##Train the data
+Model_CDT <- train(x = train_val[,-7], y = train_val[,7], method = "rpart", tuneLength = 30,
+                   trControl = ctrl)
+
+
+##Check the accurcay
+##Accurcay using 10 fold cross validation of Single tree is 0.8139 
+##Seems Overfitted earlier using Single tree, there our accurcay rate is 0.83
+
+# check the variable imporatnce, is it the same as in Single tree?
+rpart.plot(Model_CDT$finalModel,extra =  3,fallen.leaves = T)
+
+##Yes, there is no change in the imporatnce of variable
+
+
+###Lets cross validate the accurcay using data that kept aside for testing purpose
+PRE_VDTS=predict(Model_CDT$finalModel,newdata=test_val,type="class")
+confusionMatrix(PRE_VDTS,test_val$Survived)
+
+###There it is, How exactly our train data and test data matches in accuracy (0.8192)
+```
+##Random Forest
+
+```{r, message=FALSE, warning=FALSE}
+
+set.seed(1234)
+rf.1 <- randomForest(x = train_val[,-7],y=train_val[,7], importance = TRUE, ntree = 1000)
+rf.1
+varImpPlot(rf.1)
+
+####Random Forest accurcay rate is 82.91 which is 1% better than the decison  tree
+####Lets remove 2 redaundant varibles and do the modeling again
+train_val1=train_val[,-4:-5]
+test_val1=test_val[,-4:-5]
+
+set.seed(1234)
+rf.2 <- randomForest(x = train_val1[,-5],y=train_val1[,5], importance = TRUE, ntree = 1000)
+rf.2
+varImpPlot(rf.2)
+
+###Can see the Magic now, increase in accuracy by just removing 2 varibles, accuracy now is 84.03 
+
+##Even though random forest is so power full we accept the model only after cross validation
+
+
+set.seed(2348)
+cv10_1 <- createMultiFolds(train_val1[,5], k = 10, times = 10)
+
+# Set up caret's trainControl object per above.
+ctrl_1 <- trainControl(method = "repeatedcv", number = 10, repeats = 10,
+                      index = cv10_1)
+
+
+
+set.seed(1234)
+rf.5<- train(x = train_val1[,-5], y = train_val1[,5], method = "rf", tuneLength = 3,
+              ntree = 1000, trControl =ctrl_1)
+
+rf.5
+
+##Cross validation give us the accurcay rate of .8393
+
+###Lets Predict the test data 
+
+pr.rf=predict(rf.5,newdata = test_val1)
+
+confusionMatrix(pr.rf,test_val1$Survived)
+
+####accuracy rate is 0.8192, lower than what we have expected  
+```
+
+
+
+
+
+##Support Vector Machine
+###Linear Support vector Machine
+```{r, message=FALSE, warning=FALSE}
+
+###Before going to model lets tune the cost Parameter
+
+set.seed(1274)
+liner.tune=tune.svm(Survived~.,data=train_val1,kernel="linear",cost=c(0.01,0.1,0.2,0.5,0.7,1,2,3,5,10,15,20,50,100))
+
+liner.tune
+
+###best perforamnce when cost=3 and accuracy rate is 82.7
+
+
+###Lets get a best.liner model  
+best.linear=liner.tune$best.model
+
+##Predict Survival rate using test data
+
+best.test=predict(best.linear,newdata=test_val1,type="class")
+confusionMatrix(best.test,test_val1$Survived)
+
+###Linear model accuracy is 0.8136
+````
+
+###Radial Support vector Machine
+
+```{r, message=FALSE, warning=FALSE}
+
+
+######Lets go to non liner SVM, Radial Kerenl
+set.seed(1274)
+
+rd.poly=tune.svm(Survived~.,data=train_val1,kernel="radial",gamma=seq(0.1,5))
+
+summary(rd.poly)
+best.rd=rd.poly$best.model
+
+###Non Linear Kerenel giving us a better accuray 
+
+##Lets Predict test data
+pre.rd=predict(best.rd,newdata = test_val1)
+
+confusionMatrix(pre.rd,test_val1$Survived)
+
+####Accurcay of test data using Non Liner model is 0.81
+####it could be due to we are using smaller set of sample for testing data
+```
+
+##Logistic Regression
+
+```{r, message=FALSE, warning=FALSE}
+
+contrasts(train_val1$Sex)
+contrasts(train_val1$Pclass)
+
+##The above shows how the varible coded among themself
+
+##Lets run Logistic regression model
+log.mod <- glm(Survived ~ ., family = binomial(link=logit), 
+               data = train_val1)
+###Check the summary
+summary(log.mod)
+confint(log.mod)
+
+###Predict train data
+train.probs <- predict(log.mod, data=train_val1,type =  "response")
+table(train_val1$Survived,train.probs>0.5)
+
+(395+204)/(395+204+70+45)
+
+###Logistic regression predicted train data with accuracy rate of 0.83 
+
+test.probs <- predict(log.mod, newdata=test_val1,type =  "response")
+table(test_val1$Survived,test.probs>0.5)
+
+(97+47)/(97+12+21+47)
+
+###Accuracy rate of teat data is 0.8135..
+```
+#Conclusion
+
+When I submit the predicted survival data from various models that built in the course to Kaggle competion, i have got approximately the same score. Now I realize that why data scientist used to spend most of their time into feature engineering and exploratory analysis compare to actual model building.
+Model that we are using is definitely important, however more than that understanding our data and feature engineering is crucial.
+
+#Thanks
+
+I would use this opportunity to thank all the people who inspired me to learn data scientist especially people in Kaggle community sharing their script openly which helping many of new data scientist like me. 
+I am ending my first Kernel with this, I know,  I would have done more feature engineering especially to estimate the Age of missing observation and EDA on Fare. 
+I though not to use Age directly as I am not much comfortable in missing value estimation. 
+As mentioned in the start, I would much appreciate for any questions, correction and suggestion
