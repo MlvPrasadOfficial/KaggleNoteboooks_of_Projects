@@ -1,0 +1,211 @@
+---
+title: "Comparing Random Forest, XGBoost and Deep Neural Network"
+author: "Amandeep Rathee"
+date: "18 May, 2017"
+---
+
+***
+
+## Introduction
+
+There was a time when *random forest* was the coolest machine learning algorithm on machine learning competition platforms like **Kaggle** . But things changed and a better version of *gradient boosted trees* came along, with the name *XGBOOST*. The trend seems to continue and *deep learning* methods are replacing XGBOOST especially in competitions where image processing is involved. People are using deep nets recurrently in the following Kaggle competitions:
+
+* [NOAA Fisheries Steller Sea Lion Population Count](https://www.kaggle.com/c/noaa-fisheries-steller-sea-lion-population-count)
+* [Invasive Species Monitoring](https://www.kaggle.com/c/invasive-species-monitoring)
+* [Google Cloud & YouTube-8M Video Understanding Challenge](https://www.kaggle.com/c/youtube8m)
+
+## Overview of notebook
+
+This notebook compares random forest, XGBOOST and a simple deep neural network build using the H2O package in R. Since the data takes a lot of time to train, only 10% of the data is going to be used here. I'll share how the algorithms performed on full data at the end of the notebook.
+
+***
+## Load data
+
+```{r warning = F, echo = F, include = F}
+library(randomForest)
+library(data.table)
+library(caTools)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(h2o)
+
+system("ls ../input", intern=TRUE)
+
+```
+
+```{r}
+digit <- fread("../input/train.csv")
+
+```
+
+
+Let us see the distribution of **LABEL** variable.
+
+```{r}
+prop.table(table(digit$label))*100
+```
+
+Retain only 10% of the data to make things faster.
+
+```{r}
+digit <- digit[sample(1:nrow(digit), 0.1*nrow(digit), replace = FALSE), ]
+```
+
+## Predictive Modelling
+
+### Split data
+
+Split data in ratio of **80:20**. 80% is for train and the remaining 20% is to test the algorithms' performance.
+
+```{r}
+digit$label <- factor(digit$label)
+
+set.seed(1234)
+split <- sample.split(digit$label, SplitRatio = 0.8)
+train <- subset(digit, split == T)
+cv <- subset(digit, split == F)
+
+```
+
+***
+### Random Forest
+
+```{r}
+set.seed(4)
+rf.model <- randomForest(label ~ ., data = train, ntree = 100, nodesize = 50)
+rf.predict <- predict(rf.model, cv)
+print(rf.cm <- confusionMatrix(rf.predict, cv$label))
+
+print(paste("Accuracy of Random Forest:", round(rf.cm$overall[1], 4)))
+
+```
+
+***
+### XGBoost
+
+```{r warning = F, include = F, echo = F}
+digit <- fread("../input/train.csv")
+
+set.seed(1234)
+split <- sample.split(digit$label, SplitRatio = 0.8)
+train <- subset(digit, split == T)
+cv <- subset(digit, split == F)
+
+```
+
+```{r}
+
+# convert every variable to numeric, even the integer variables
+train <- as.data.frame(lapply(train, as.numeric))
+cv <- as.data.frame(lapply(cv, as.numeric))
+
+# convert data to xgboost format
+data.train <- xgb.DMatrix(data = data.matrix(train[, 2:ncol(train)]), label = train$label)
+data.cv <- xgb.DMatrix(data = data.matrix(cv[, 2:ncol(cv)]), label = cv$label)
+
+watchlist <- list(train  = data.train, test = data.cv)
+
+parameters <- list(
+    # General Parameters
+    booster            = "gbtree",          # default = "gbtree"
+    silent             = 0,                 # default = 0
+    # Booster Parameters
+    eta                = 0.3,               # default = 0.3, range: [0,1]
+    gamma              = 0,                 # default = 0,   range: [0,∞]
+    max_depth          = 6,                 # default = 6,   range: [1,∞]
+    min_child_weight   = 1,                 # default = 1,   range: [0,∞]
+    subsample          = 1,                 # default = 1,   range: (0,1]
+    colsample_bytree   = 1,                 # default = 1,   range: (0,1]
+    colsample_bylevel  = 1,                 # default = 1,   range: (0,1]
+    lambda             = 1,                 # default = 1
+    alpha              = 0,                 # default = 0
+    # Task Parameters
+    objective          = "multi:softmax",   # default = "reg:linear"
+    eval_metric        = "merror",
+    num_class          = 10,
+    seed               = 1234				# reproducability seed
+    )
+
+xgb.model <- xgb.train(parameters, data.train, nrounds = 10, watchlist)
+xgb.predict <- predict(xgb.model, data.cv)
+print(xgb.cm <- confusionMatrix(xgb.predict, cv$label))
+print(paste("Accuracy of XGBoost is:", round(xgb.cm$overall[1], 4)))
+
+```
+
+***
+### Deep Neural Network using H2O
+
+```{r warning = F, include = F, echo = F}
+
+localH2O <- h2o.init(ip = 'localhost', port = 54321, nthreads = -1)
+
+digit <- fread("../input/train.csv")
+digit$label <- factor(digit$label)
+
+set.seed(1234)
+split <- sample.split(digit$label, SplitRatio = 0.8)
+train <- subset(digit, split == T)
+cv <- subset(digit, split == F)
+
+```
+
+```{r}
+
+h2o.train <- as.h2o(train)
+h2o.cv <- as.h2o(cv)
+
+h2o.model <- h2o.deeplearning(x = setdiff(names(train), c("label")),
+                              y = "label",
+                              training_frame = h2o.train,
+                              standardize = TRUE,         # standardize data
+                              hidden = c(100, 100),       # 2 layers of 00 nodes each
+                              rate = 0.05,                # learning rate
+                              epochs = 10,                # iterations/runs over data
+                              seed = 1234                 # reproducability seed
+                              )
+                              
+
+h2o.predictions <- as.data.frame(h2o.predict(h2o.model, h2o.cv))
+print(h2o.cm <- confusionMatrix(h2o.predictions$predict, cv$label))
+print(paste("Accuracy of Deep neural network is:", round(h2o.cm$overall[1], 4)))
+
+```
+
+***
+## Result
+
+```{r}
+print(paste("Accuracy of Random Forest:", round(rf.cm$overall[1], 4)))
+print(paste("Accuracy of XGBoost is:", round(xgb.cm$overall[1], 4)))
+print(paste("Accuracy of Deep neural network is:", round(h2o.cm$overall[1], 4)))
+
+```
+
+
+
+While running the above algorithms on full data I got the following accuracies on the same 80:20 split with the following parameters:
+
+***
+
+
+Model           | Accuracy      | Parameters
+--------------- | ------------- | -----------------------------------------------------------
+Random Forest   | 0.9490        | trees = 2000, nodesize = 50
+XGBoost         | 0.9705        | all default parameters, nrounds = 100
+H2O Deep Net    | 0.9750        | rate = 0.05, epochs = 50, hidden layer = [200, 200, 200]
+
+
+***
+
+
+The difference between Random Forest and other 2 is significant in this case. XGBoost and Deep Neural Nets outperform it completely. But when it comes to XGBoost vs Deep Neural Networks, there is no significant difference. One reason for this might be the small amount of data taken into account while training the models. Deep neural networks need humongous amount of data to show their relevance.
+
+## Closing Remarks
+
+* I hope you liked the notebook and it provided some insights about the three popular algorithms.
+
+* I got my first **silver medal** a few days back and it was a great confidence booster for me. It is hard to believe but I am **ranked #35** in the Kernels section now.
+
+* Don't forget to **UPVOTE**. This is one of the things that keeps me going. Keep learning and stay healthy :)

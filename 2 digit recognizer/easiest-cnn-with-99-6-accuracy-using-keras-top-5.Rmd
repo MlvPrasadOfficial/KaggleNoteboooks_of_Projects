@@ -1,0 +1,295 @@
+---
+
+title: 'Simple CNN model to push your result to the top'
+
+author: "Chengran (Owen) Ouyang"
+
+date: "`r format(Sys.Date())`"
+
+output:
+
+  html_document:
+
+    theme: lumen
+
+    number_sections: true
+
+    font-family: Open Sans, sans-serif
+
+    font-import: https://fonts.googleapis.com/css?family=Open+Sans
+
+    code_folding: hide
+
+    highlight: tango
+
+editor_options: 
+
+  chunk_output_type: console
+
+---
+
+
+
+
+
+# Goal & Objective
+
+
+
+
+
+**Mission Statement**: The goal of this kernal is help people with zero knowledge of Convolutional Nerual Network (CNN) to leverage the tool and achieve outstanding result.
+
+
+
+
+
+This kernel is a follow up of my previous [DNN Model Kernel](https://www.kaggle.com/couyang/when-keras-light-shine-in-r-you-shall-have-it-all). This time, I am pushing the model to achieve high accuracy with additional convolutional layers and data augmentation. 
+
+Unlike the traditional kernel masters' structure, the most important thing that my models and kernels are focusing on is efficiency. I am trying my best to make the model to be as good as possible with minimal amount of coding.
+
+The purpose of the result is to serve as a benchmark and provide the baseline for further improvement. Moreover, anyone without extensive knowledge in coding can easily read and understand my code. 
+
+That is being said, whoever has any question regarding my code, please leave a comment and I am happy to explain. Lastly, if you like my kernel, please give me a upvote. Thanks!
+
+ 
+
+ 
+
+## Load packages and data
+
+To set it up on your end, you need to install tensorflow and keras (*install_tensorflow()* & *install_keras()*)
+
+```{r setup, include=T, message = F, warning=F}
+
+set.seed(111)
+
+if (!require("pacman")) install.packages("pacman") 
+
+pacman::p_load(tidyverse, keras, tensorflow)
+
+
+
+train <- data.matrix(read.csv("../input/train.csv", header=T))
+
+test <- data.matrix(read.csv("../input/test.csv", header=T))
+
+```
+
+
+
+## Preprocess the data
+
+
+
+Same process as my last kernal for the following function to_categorical() & normalize() but the dimension of the data need to changed for CNN model. 
+
+
+
+```{r, message=FALSE, warning=FALSE}
+
+train.label<-train[,1] %>% to_categorical()
+
+
+
+train.feature<-train[,-1] %>% normalize()
+
+test.feature<-test %>% normalize()
+
+
+
+dim(train.feature)<-c(nrow(train.feature),28,28,1)
+
+dim(test.feature)<-c(nrow(test.feature),28,28,1)
+
+
+
+```
+
+
+
+## Building A Simple Convolutional Neural Network
+
+
+
+The model is using very basic cnn model with Convolutional layers, Fully Connected layers.
+
+
+
+The epochs is only set to be 30 to save time. Push this number higher to run overnight or leverage a GPU to get better result.
+
+
+
+One more thing that I added is data augmentation for which shake and alter the picture a little bit to have the machine to learning from different angle to improve accuracy.
+
+
+
+```{r, message=FALSE, warning=FALSE}
+
+model<-keras_model_sequential()
+
+
+
+model %>% 
+
+  layer_conv_2d(filters = 32, kernel_size = c(5,5),padding = 'Valid',
+
+                activation = 'relu', input_shape = c(28,28,1))%>%
+
+  layer_batch_normalization()%>%
+
+  layer_conv_2d(filters = 32, kernel_size = c(5,5),padding = 'Same',
+
+                activation = 'relu')%>%
+
+  layer_batch_normalization()%>%
+
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+
+  layer_dropout(rate = 0.2) %>% 
+
+  
+
+  layer_conv_2d(filters = 64, kernel_size = c(3,3),padding = 'Same',
+
+                activation = 'relu')%>%
+
+  layer_batch_normalization()%>%
+
+  layer_conv_2d(filters = 64, kernel_size = c(3,3),padding = 'Same',
+
+                activation = 'relu')%>%
+
+  layer_batch_normalization()%>%
+
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+
+  layer_dropout(rate = 0.2) %>%
+
+  
+
+  layer_flatten() %>% 
+
+  layer_dense(units=1024,activation='relu')%>%
+
+  layer_dense(units=512,activation='relu')%>%
+
+  layer_dense(units=256,activation='relu')%>%
+
+  layer_dense(units=10,activation='softmax')
+
+  
+
+ model%>%compile(
+
+  loss='categorical_crossentropy',
+
+  optimizer='adam',
+
+  metrics='accuracy'
+
+)
+
+
+
+datagen <- image_data_generator(
+
+  featurewise_center = F,
+
+  samplewise_center=F,
+
+  featurewise_std_normalization = F,
+
+  samplewise_std_normalization=F,
+
+  zca_whitening=F,
+
+  horizontal_flip = F,
+
+  vertical_flip = F,
+
+  width_shift_range = 0.15,
+
+  height_shift_range = 0.15,
+
+  zoom_range = 0.15,
+
+  rotation_range = .15,
+
+  shear_range = 0.15
+
+)
+
+
+
+
+
+datagen %>% fit_image_data_generator(train.feature)
+
+
+
+history<-model %>%
+
+  fit_generator(flow_images_from_data(train.feature, train.label, datagen, batch_size = 64),
+
+                steps_per_epoch = nrow(train.feature)/64, epochs = 30)
+
+
+
+
+
+```
+
+## Training process visualization
+
+Then, let's plot the training process of the 30 epochs. 
+
+
+
+```{r, eval=TRUE, include=TRUE}
+
+plot(history)
+
+
+
+```
+
+
+
+## Submit the result
+
+
+
+As the graph shows, the accuracy has been improving as the epochs increase. I used a very low epochs for this kernel to save time but feel free to bump it up to achieve better result. 
+
+
+
+The next step is to predict based on the test dataset and submit
+
+
+
+```{r, eval=TRUE, include=TRUE}
+
+pred<-model %>% predict_classes(test.feature,batch_size=64)
+
+
+
+cnnsubmission<-data.frame(ImageId=1:nrow(test),Label=pred)
+
+
+
+write.csv(cnnsubmission, file="cnnsubmission.csv", row.names=F)
+
+```
+
+
+
+## Conclusion
+
+
+
+If you like my kernal so far, please give a upvote~ Thanks!
+
+
+
+With this code, even the very beginner of data science can build strong CNN models and achieve remarkable result!

@@ -1,0 +1,149 @@
+---
+title: "Digit Recognizer"
+author: "Frank C"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Contents
+
+
+- Load and Check the Data
+- Data Preprocessing
+- PCA with Data
+- Train and Prediction
+
+## Load and Check the Data
+
+
+```{r load data, message=FALSE}
+library(readr)
+library(caret)
+
+train <- read_csv("../input/train.csv")
+test <- read_csv("../input/test.csv")
+```
+
+Let's check the data in train.
+
+```{r check data}
+dim(train)
+table(as.factor(train$label))
+ggplot(train,aes(x=as.factor(label),fill=label))+
+  geom_bar(stat="count",color="white")+
+  scale_fill_gradient(low="lightblue",high="pink",guide=FALSE)+
+  labs(title="Digits in Train Data",x="Digits")
+```
+
+There are `r dim(train)[1]` rows and `r dim(train)[2]` columns in the train data. It seems that the number of digits has little difference. 
+
+Here we know the labels are handwritten digits, what do they look like? Let's just have a look. I randomly sample 50 rows from train data set and turn them to images:
+
+```{r images}
+sample <- sample(1:nrow(train),50)
+var <- t(train[sample,-1])
+var_matrix <- lapply(1:50,function(x) matrix(var[,x],ncol=28))
+opar <- par(no.readonly = T)
+par(mfrow=c(5,10),mar=c(.1,.1,.1,.1))
+
+for(i in 1:50) {
+  for(j in 1:28) {
+    var_matrix[[i]][j,] <- rev(var_matrix[[i]][j,])
+  }
+  image(var_matrix[[i]],col=grey.colors(225),axes=F)
+}
+par(opar)
+```
+
+
+## Data Preprocessing
+
+
+We find many predictors have few unique values and most of the values are just zero;  their variances are nearly zero. It is not good for the prediction and we will find such predictors and eliminate them.
+
+```{r nzv}
+nzr <- nearZeroVar(train[,-1],saveMetrics=T,freqCut=10000/1,uniqueCut=1/7)
+sum(nzr$zeroVar)
+sum(nzr$nzv)
+```
+
+So, we find `r sum(nzr$nzv)` near-zero-variance predictors; we will exclude the predictors and get the new train data.
+
+```{r new train}
+cutvar <- rownames(nzr[nzr$nzv==TRUE,])
+var <- setdiff(names(train),cutvar)
+train <- train[,var]
+```
+
+## PCA with Data
+
+
+Given too many predictors, PCA will be applied to the train. First, we will scale train data with maximum and then obtain covariance matrix of the predictors.
+
+```{r cov}
+label <- as.factor(train[[1]])
+train$label <- NULL
+train <- train/255
+covtrain <- cov(train)
+```
+
+Let's just apply the PCA to the covariance matrix and check how many components will be enough for modeling.
+
+```{r PCA}
+train_pc <- prcomp(covtrain)
+varex <- train_pc$sdev^2/sum(train_pc$sdev^2)
+varcum <- cumsum(varex)
+result <- data.frame(num=1:length(train_pc$sdev),
+                         ex=varex,
+                         cum=varcum)
+
+plot(result$num,result$cum,type="b",xlim=c(0,100),
+     main="Variance Explained by Top 100 Components",
+     xlab="Number of Components",ylab="Variance Explained")
+abline(v=25,lty=2)
+```
+
+According to the plots, 25 may be a good choice, so we will utilize 25 components to fit model. Here, we can plot firt principal components.
+
+```{r score}
+train_score <- as.matrix(train) %*% train_pc$rotation[,1:25]
+train <- cbind(label,as.data.frame(train_score))
+
+colors <- rainbow(length(unique(train$label)))
+names(colors) <- unique(train$label)
+plot(train$PC1,train$PC2,type="n",main="First Two Principal Components")
+text(train$PC1,train$PC2,label=train$label,col=colors[train$label])
+```
+
+
+## Train and Prediction
+
+
+Well, it's time to train the data and get a proper model. we will rely on the svm classification algorithm. We then get the new test data with the process like train data. Finally, we predict the new test data with svm model. The score in the Kaggle's leaderboard is a litte over 0.98, NOT BAD!
+
+```{r model, eval=FALSE}
+svm_mdl <- train(label~.,data=train,
+                 method="svmRadial",
+                 trControl=trainControl(method="cv",
+                                        number=5),
+                 tuneGrid=data.frame(sigma = 0.01104614,
+                                      C = 3.5))
+svm_mdl
+```
+
+```{r prediction, eval=FALSE}
+test <- test[,var[-1]]/255
+test <- as.matrix(test) %*% train_pc$rotation[,1:25]
+test <- as.data.frame(test)
+
+pred <- predict(svm_mdl$finalModel,test,type="response")
+prediction <- data.frame(ImageId=1:nrow(test),Label=pred)
+```
+
+
+
+
+
