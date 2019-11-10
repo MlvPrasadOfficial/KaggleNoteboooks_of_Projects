@@ -1,0 +1,116 @@
+---
+title: "Boruta Feature Importance Analysis"
+author: "Jim Thompson"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup,message=FALSE,warning=FALSE}
+library(caret)
+library(data.table)
+library(Boruta)
+library(plyr)
+library(dplyr)
+library(pROC)
+
+ROOT.DIR <- ".."
+
+ID.VAR <- "Id"
+TARGET.VAR <- "SalePrice"
+
+```
+This report determines what features may be relevant to predicting house sale price. This analysis is based on the [**Boruta**](https://cran.r-project.org/web/packages/Boruta/index.html) package.
+
+### Data Preparation for Bourta Analysis
+```{r DataRetrieval}
+
+# retrive data for analysis
+sample.df <- read.csv(file.path(ROOT.DIR,"input/train.csv"),stringsAsFactors = FALSE)
+```
+
+Determine data type for each candidate explanatory attributes.
+```{r QuickDataProfile}
+# extract only candidate feture names
+candidate.features <- setdiff(names(sample.df),c(ID.VAR,TARGET.VAR))
+data.type <- sapply(candidate.features,function(x){class(sample.df[[x]])})
+table(data.type)
+
+print(data.type)
+
+# deterimine data types
+explanatory.attributes <- setdiff(names(sample.df),c(ID.VAR,TARGET.VAR))
+data.classes <- sapply(explanatory.attributes,function(x){class(sample.df[[x]])})
+
+# categorize data types in the data set?
+unique.classes <- unique(data.classes)
+
+attr.data.types <- lapply(unique.classes,function(x){names(data.classes[data.classes==x])})
+names(attr.data.types) <- unique.classes
+
+```
+
+Prepare data set for Boruta analysis.  For this analysis, missing values are
+handled as follows:
+* missing numeric data is set to -1
+* missing character data is set to __*MISSING*__
+
+For this analysis character attributes are handled as factors.  One limitation of 
+handling character data as factors is the underlying assumption there is a relative 
+ordering for the factor levels.
+```{r PrepareData}
+# pull out the response variable
+response <- sample.df$SalePrice
+
+# remove identifier and response variables
+sample.df <- sample.df[candidate.features]
+
+# for numeric set missing values to -1 for purposes of the random forest run
+for (x in attr.data.types$integer){
+  sample.df[[x]][is.na(sample.df[[x]])] <- -1
+}
+
+for (x in attr.data.types$character){
+  sample.df[[x]][is.na(sample.df[[x]])] <- "*MISSING*"
+}
+
+```
+
+
+
+### Run Boruta Analysis
+```{r borutarun}
+
+set.seed(13)
+bor.results <- Boruta(sample.df,response,
+                   maxRuns=101,
+                   doTrace=0)
+```
+
+
+### Boruta results
+```{r borutaresults1,echo=FALSE}
+cat("\nSummary of Boruta run:\n")
+print(bor.results)
+```
+
+These attributes were deemed as relevent to predicting house sale price.
+```{r echo=FALSE}
+cat("\n\nRelevant Attributes:\n")
+getSelectedAttributes(bor.results)
+```
+
+The following plot shows the relative importance of each candidate explanatory attribute.
+The x-axis represents each of candidate explanatory variables.  Green color indicates
+the attributes that are relevant to prediction.  Red indicates attributes that
+are not relevant.  Yellow color indicates attributes that may or may not be relevant to 
+predicting the response variable.
+```{r borutaplot,echo=FALSE,fig.width=9,fig.height=7}
+plot(bor.results)
+```
+
+Detailed results for each candidate explanatory attributes.
+```{r detailattrdump,echo=FALSE}
+cat("\n\nAttribute Importance Details:\n")
+options(width=125)
+arrange(cbind(attr=rownames(attStats(bor.results)), attStats(bor.results)),desc(medianImp))
+```

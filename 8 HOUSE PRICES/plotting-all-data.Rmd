@@ -1,0 +1,54 @@
+# Plotting all data using tabplots
+
+Objective: find out some of the good features visually =)
+
+```{r, fig.width = 11, fig.height = 5.5, echo = FALSE, message = FALSE, warning = FALSE}
+invisible(library(tabplot))
+invisible(library(data.table))
+
+columns <- c("numeric",
+             rep("character", 2),
+             rep("numeric", 2),
+             rep("character", 12),
+             rep("numeric", 4),
+             rep("character", 5),
+             "numeric",
+             rep("character", 7),
+             "numeric",
+             "character",
+             rep("numeric", 3),
+             rep("character", 4),
+             rep("numeric", 10),
+             "character",
+             "numeric",
+             "character",
+             "numeric",
+             rep("character", 2),
+             "numeric",
+             "character",
+             rep("numeric", 2),
+             rep("character", 3),
+             rep("numeric", 6),
+             rep("character", 3),
+             rep("numeric", 3),
+             rep("character", 2),
+             rep("numeric"))
+
+data <- fread("../input/train.csv", data.table = FALSE, header = TRUE, sep = ",", colClasses = columns)
+
+data$SalePrice <- log(data$SalePrice) # To respect lrmse
+
+data <- as.data.frame(data)
+
+for (i in 1:80) {
+  if (typeof(data[, i]) == "character") {
+    data[is.na(data[, i]), i] <- ""
+    data[, i] <- as.factor(data[, i])
+  }
+}
+
+for (i in 1:16) {
+  plot(tableplot(data, select = c(((i - 1) * 5 + 1):(i * 5), 81), sortCol = 6, nBins = 73, plot = FALSE), fontsize = 12, title = paste("log(SalePrice) vs ", paste(colnames(data)[((i - 1) * 5 + 1):(i * 5)], collapse = "+"), sep = ""), showTitle = TRUE, fontsize.title = 12)
+}
+
+```

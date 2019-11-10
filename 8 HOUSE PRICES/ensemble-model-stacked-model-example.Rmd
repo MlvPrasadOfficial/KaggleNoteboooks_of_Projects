@@ -1,0 +1,550 @@
+---
+title: "Ensemble Modeling: Stack Model Example"
+author: "J. Thompson"
+date: "September 6, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(caret)
+library(plyr)
+library(dplyr)
+library(xgboost)
+library(ranger)
+library(nnet)
+library(Metrics)
+library(ggplot2)
+
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+
+ROOT.DIR <- ".." #getwd()
+
+DATA.DIR <- paste(ROOT.DIR,"input",sep="/")
+```
+
+This paper illustrates an ensemble model approach to generate the submission data set
+for the Kaggle __House Price__ competition.  Ensemble modeling involves training 
+multiple models and combining their predictions to derive the 
+predictions submitted to Kaggle. The specific ensemble approach illustrated is called model stacking.
+
+The diagram below shows the high-level model stacking architecture, which is composed
+of two stages. The top-level stage, called Level 0, is composed of
+three modeling algorithms:
+Gradient Boosting (gbm), Extreme Gradient Boosting (xgb) and Random Forest (rngr).
+The second stage, Level 1, is composed of a single Neural Network (nnet) model.  The 
+predictions from Level 1 are used to create the Kaggle submission data set.
+
+__Feature Sets__ in the diagram reprsents one or more sets of attributes created for the Level 0
+models.
+
+```{r,fig.height=5,fig.width=5,fig.align='center',echo=FALSE}
+
+prediction_arrow <- arrow(length=(unit(0.15,"inches")))
+
+ggplot() +
+  xlim(0,5) + ylim(0,5) +
+  scale_fill_discrete(name="Model Stage") +
+  
+  # Level 0 Models
+  geom_rect(aes(xmin=0.5,ymin=3,xmax=1.5,ymax=4,fill="Level 0")) +
+  geom_text(aes(x=1,y=3.5,label="gbm")) +
+  geom_rect(aes(xmin=2,ymin=3,xmax=3,ymax=4,fill="Level 0")) +
+  geom_text(aes(x=2.5,y=3.5,label="xgb")) +
+  geom_rect(aes(xmin=3.5,ymin=3,xmax=4.5,ymax=4,fill="Level 0")) +
+  geom_text(aes(x=4,y=3.5,label="rngr")) +
+  
+  #Level 1 Model
+  geom_rect(aes(xmin=2,ymin=1,xmax=3,ymax=2,fill="Level 1")) +
+  geom_text(aes(x=2.5,y=1.5,label="nnet")) +
+  
+  #Feature Set
+  geom_rect(aes(xmin=0.5,ymin=4.5,xmax=4.5,ymax=5),alpha=0.25) +
+  geom_text(aes(x=2.5,y=4.75,label="Feature Sets")) +
+  
+  # prediction lines
+  geom_segment(aes(x=1,y=4.5,xend=1,yend=4),arrow=prediction_arrow) +
+  geom_segment(aes(x=1,y=3,xend=2.25,yend=2),arrow=prediction_arrow) +
+  
+  geom_segment(aes(x=2.5,y=4.5,xend=2.5,yend=4),arrow=prediction_arrow) +
+  geom_segment(aes(x=2.5,y=3,xend=2.5,yend=2),arrow=prediction_arrow) +
+  
+  geom_segment(aes(x=4,y=4.5,xend=4,yend=4),arrow=prediction_arrow) +
+  geom_segment(aes(x=4,y=3,xend=2.75,yend=2),arrow=prediction_arrow) +
+  
+  geom_segment(aes(x=2.5,y=1,xend=2.5,yend=0.5),arrow=prediction_arrow) +
+  
+  geom_text(aes(x=2.5,y=2.75,label="Level 0 Model Predictions",fontface="bold")) +
+  geom_text(aes(x=2.5,y=0.35,label="Level 1 Model Prediction",fontface="bold")) +
+  
+  theme(
+    panel.background=element_blank(),
+    axis.title=element_blank(),
+    axis.text=element_blank(),
+    axis.ticks=element_blank()
+  )
+ 
+  
+
+```
+
+
+
+The following chart shows the model performance of the individual Level 0 models 
+versus the overall stacked model.
+
+```{r,echo=FALSE,fig.align='center',results='hide'}
+plb_data <- read.csv(textConnection(
+'Model,PLB_Score,Level
+gbm,0.12852,"Level 0"
+xgb,0.13696,"Level 0"
+rngr,0.14703,"Level 0"
+nnet,0.12678,"Level 1"'
+),stringsAsFactors = FALSE)
+
+plb_data
+
+pct_reduction <- 100*(1 - filter(plb_data,Model=="nnet")$PLB_Score/filter(plb_data,Model=="gbm")$PLB_Score)
+
+
+ggplot(data=plb_data) +
+  geom_bar(aes(x=reorder(Model,-PLB_Score),y=PLB_Score,fill=Level),
+           stat="identity") +
+  geom_text(aes(x=reorder(Model,-PLB_Score),y=PLB_Score,label=PLB_Score),vjust=-0.25) +
+  scale_fill_discrete(name="Model Stage") +
+  ylab("Public Leaderboard Score") +
+  xlab("Model") +
+  ggtitle("Kaggle Public Leaderboard Scores")
+  
+```
+
+From the above chart we see that the Level 1 model is a `r sprintf("%.2f",pct_reduction)`%
+improvement over the best performing Level 0 model.
+
+To fit within the constraints of Kaggle's Kernel offering, a simplified structure for
+the stacked model was used in this report.  The specific simplications are
+
+* Limit Level 0 to three models 
+* LImit Level 1 to one model
+
+Improvements in stacked model performance can be accomplished by
+
+* Adding models to Level 0 and Level 1 using different algorithms
+* Tuning model Hyper-parameters
+* Adding feature sets by feature engineering
+* Adding levels in the model structure
+
+For additional information on model stacking see these references:
+
+* [MLWave: Kaggle Ensembling Guide](http://mlwave.com/kaggle-ensembling-guide/)
+* [Kaggle Forum Posting: Stacking](https://www.kaggle.com/forums/f/208/getting-started/t/18153/stacking/103381)
+* [Winning Data Science Competitions: Jeong-Yoon Lee](https://www.youtube.com/watch?v=ClAZQI_B4t8)  This talk is about 90 minutes long.  The sections relevant to model stacking are discussed in 
+these segments (h:mm:ss to h:mm:ss): 1:05:25 to 1:12:15 and 1:21:30 to 1:27:00.
+
+The remainder of this paper demonstrates the model stacking training pipeline.  First we 
+show an approach for creating model feature sets.  Next we demonstrate an approach for
+training Level 0 models using the [caret package](https://cran.r-project.org/web/packages/caret/index.html). 
+Then we end with creating features for the Level 1 model and creating the Kaggle submission data set.
+
+# Data Preparation
+
+## Retrieve Data
+```{r InputData}
+train.raw <- read.csv(file.path(DATA.DIR,"train.csv"),stringsAsFactors = FALSE)
+
+test.raw <- read.csv(file.path(DATA.DIR,"test.csv"), stringsAsFactors = FALSE)
+
+```
+
+## Initial Data Profile
+
+Feature selection is based on an [earlier Boruta](https://www.kaggle.com/jimthompson/house-prices-advanced-regression-techniques/boruta-feature-importance-analysis) feature importance analysis.
+
+```{r SetupForDataPrep}
+# incorporate results of Boruta analysis
+CONFIRMED_ATTR <- c("MSSubClass","MSZoning","LotArea","LotShape","LandContour","Neighborhood",
+                    "BldgType","HouseStyle","OverallQual","OverallCond","YearBuilt",
+                    "YearRemodAdd","Exterior1st","Exterior2nd","MasVnrArea","ExterQual",
+                    "Foundation","BsmtQual","BsmtCond","BsmtFinType1","BsmtFinSF1",
+                    "BsmtFinType2","BsmtUnfSF","TotalBsmtSF","HeatingQC","CentralAir",
+                    "X1stFlrSF","X2ndFlrSF","GrLivArea","BsmtFullBath","FullBath","HalfBath",
+                    "BedroomAbvGr","KitchenAbvGr","KitchenQual","TotRmsAbvGrd","Functional",
+                    "Fireplaces","FireplaceQu","GarageType","GarageYrBlt","GarageFinish",
+                    "GarageCars","GarageArea","GarageQual","GarageCond","PavedDrive","WoodDeckSF",
+                    "OpenPorchSF","Fence")
+
+TENTATIVE_ATTR <- c("Alley","LandSlope","Condition1","RoofStyle","MasVnrType","BsmtExposure",
+                    "Electrical","EnclosedPorch","SaleCondition")
+
+REJECTED_ATTR <- c("LotFrontage","Street","Utilities","LotConfig","Condition2","RoofMatl",
+                   "ExterCond","BsmtFinSF2","Heating","LowQualFinSF","BsmtHalfBath",
+                   "X3SsnPorch","ScreenPorch","PoolArea","PoolQC","MiscFeature","MiscVal",
+                   "MoSold","YrSold","SaleType")
+
+PREDICTOR_ATTR <- c(CONFIRMED_ATTR,TENTATIVE_ATTR,REJECTED_ATTR)
+
+# Determine data types in the data set
+data_types <- sapply(PREDICTOR_ATTR,function(x){class(train.raw[[x]])})
+unique_data_types <- unique(data_types)
+
+# Separate attributes by data type
+DATA_ATTR_TYPES <- lapply(unique_data_types,function(x){ names(data_types[data_types == x])})
+names(DATA_ATTR_TYPES) <- unique_data_types
+
+
+# create folds for training
+set.seed(13)
+data_folds <- createFolds(train.raw$SalePrice, k=5)
+
+```
+
+
+## Create Level 0 Model Feature Sets
+
+For this work, two feature sets were created.  Both of these sets included Boruta
+Confirmed and Tentative attributes.
+
+Each feature set is created by a specific user-defined R function.  These functions
+convert the raw training data into a feature set.
+
+No extensive feature engineering was performed.  Missing values are handled as 
+follows:
+
+* Numeric: set to -1
+* Character: set to "\*MISSING\*"
+
+Character attributes are converted to R factor variables.  
+```{r PrepareFeatureSets}
+# Feature Set 1 - Boruta Confirmed and tentative Attributes
+prepL0FeatureSet1 <- function(df) {
+    id <- df$Id
+    if (class(df$SalePrice) != "NULL") {
+        y <- log(df$SalePrice)
+    } else {
+        y <- NULL
+    }
+    
+    
+    predictor_vars <- c(CONFIRMED_ATTR,TENTATIVE_ATTR)
+    
+    predictors <- df[predictor_vars]
+    
+    # for numeric set missing values to -1 for purposes
+    num_attr <- intersect(predictor_vars,DATA_ATTR_TYPES$integer)
+    for (x in num_attr){
+      predictors[[x]][is.na(predictors[[x]])] <- -1
+    }
+
+    # for character  atributes set missing value
+    char_attr <- intersect(predictor_vars,DATA_ATTR_TYPES$character)
+    for (x in char_attr){
+      predictors[[x]][is.na(predictors[[x]])] <- "*MISSING*"
+      predictors[[x]] <- factor(predictors[[x]])
+    }
+    
+    return(list(id=id,y=y,predictors=predictors))
+}
+
+L0FeatureSet1 <- list(train=prepL0FeatureSet1(train.raw),
+                    test=prepL0FeatureSet1(test.raw))
+
+# Feature Set 2 (xgboost) - Boruta Confirmed Attributes
+prepL0FeatureSet2 <- function(df) {
+    id <- df$Id
+    if (class(df$SalePrice) != "NULL") {
+        y <- log(df$SalePrice)
+    } else {
+        y <- NULL
+    }
+    
+    
+    predictor_vars <- c(CONFIRMED_ATTR,TENTATIVE_ATTR)
+    
+    predictors <- df[predictor_vars]
+    
+    # for numeric set missing values to -1 for purposes
+    num_attr <- intersect(predictor_vars,DATA_ATTR_TYPES$integer)
+    for (x in num_attr){
+      predictors[[x]][is.na(predictors[[x]])] <- -1
+    }
+
+    # for character  atributes set missing value
+    char_attr <- intersect(predictor_vars,DATA_ATTR_TYPES$character)
+    for (x in char_attr){
+      predictors[[x]][is.na(predictors[[x]])] <- "*MISSING*"
+      predictors[[x]] <- as.numeric(factor(predictors[[x]]))
+    }
+    
+    return(list(id=id,y=y,predictors=as.matrix(predictors)))
+}
+
+L0FeatureSet2 <- list(train=prepL0FeatureSet2(train.raw),
+                    test=prepL0FeatureSet2(test.raw))
+
+
+```
+
+## Level 0 Model Training
+### Helper Function For Training 
+```{r}
+#train model on one data fold
+trainOneFold <- function(this_fold,feature_set) {
+    # get fold specific cv data
+    cv.data <- list()
+    cv.data$predictors <- feature_set$train$predictors[this_fold,]
+    cv.data$ID <- feature_set$train$id[this_fold]
+    cv.data$y <- feature_set$train$y[this_fold]
+    
+    # get training data for specific fold
+    train.data <- list()
+    train.data$predictors <- feature_set$train$predictors[-this_fold,]
+    train.data$y <- feature_set$train$y[-this_fold]
+
+    
+    set.seed(825)
+    fitted_mdl <- do.call(train,
+                          c(list(x=train.data$predictors,y=train.data$y),
+                        CARET.TRAIN.PARMS,
+                        MODEL.SPECIFIC.PARMS,
+                        CARET.TRAIN.OTHER.PARMS))
+    
+    yhat <- predict(fitted_mdl,newdata = cv.data$predictors,type = "raw")
+    
+    score <- rmse(cv.data$y,yhat)
+    
+    ans <- list(fitted_mdl=fitted_mdl,
+                score=score,
+                predictions=data.frame(ID=cv.data$ID,yhat=yhat,y=cv.data$y))
+    
+    return(ans)
+    
+}
+
+# make prediction from a model fitted to one fold
+makeOneFoldTestPrediction <- function(this_fold,feature_set) {
+    fitted_mdl <- this_fold$fitted_mdl
+    
+    yhat <- predict(fitted_mdl,newdata = feature_set$test$predictors,type = "raw")
+    
+    return(yhat)
+}
+```
+
+
+### gbm Model
+Public Leaderboard Score: `r filter(plb_data,Model=="gbm")$PLB_Score`
+```{r trainL0gbm,eval=TRUE}
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="gbm")   
+
+CARET.TUNE.GRID <-  expand.grid(n.trees=100, 
+                                interaction.depth=10, 
+                                shrinkage=0.1,
+                                n.minobsinnode=10)
+
+MODEL.SPECIFIC.PARMS <- list(verbose=0) #NULL # Other model specific parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="none",
+                                 verboseIter=FALSE,
+                                 classProbs=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                           tuneGrid=CARET.TUNE.GRID,
+                           metric="RMSE")
+
+# generate features for Level 1
+gbm_set <- llply(data_folds,trainOneFold,L0FeatureSet1)
+
+# final model fit
+gbm_mdl <- do.call(train,
+                 c(list(x=L0FeatureSet1$train$predictors,y=L0FeatureSet1$train$y),
+                 CARET.TRAIN.PARMS,
+                 MODEL.SPECIFIC.PARMS,
+                 CARET.TRAIN.OTHER.PARMS))
+
+# CV Error Estimate
+cv_y <- do.call(c,lapply(gbm_set,function(x){x$predictions$y}))
+cv_yhat <- do.call(c,lapply(gbm_set,function(x){x$predictions$yhat}))
+rmse(cv_y,cv_yhat)
+cat("Average CV rmse:",mean(do.call(c,lapply(gbm_set,function(x){x$score}))))
+
+
+# create test submission.
+# A prediction is made by averaging the predictions made by using the models
+# fitted for each fold.
+
+test_gbm_yhat <- predict(gbm_mdl,newdata = L0FeatureSet1$test$predictors,type = "raw")
+gbm_submission <- cbind(Id=L0FeatureSet1$test$id,SalePrice=exp(test_gbm_yhat))
+write.csv(gbm_submission,file="gbm_sumbission.csv",row.names=FALSE)
+
+
+```
+
+
+### xgboost Model
+Public Leader Board Score: `r filter(plb_data,Model=="xgb")$PLB_Score`
+```{r trainL0xgb,eval=TRUE}
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="xgbTree")   
+
+CARET.TUNE.GRID <-  expand.grid(nrounds=800, 
+                                max_depth=10, 
+                                eta=0.03, 
+                                gamma=0.1, 
+                                colsample_bytree=0.4, 
+                                min_child_weight=1)
+
+MODEL.SPECIFIC.PARMS <- list(verbose=0) #NULL # Other model specific parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="none",
+                                 verboseIter=FALSE,
+                                 classProbs=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                           tuneGrid=CARET.TUNE.GRID,
+                           metric="RMSE")
+
+# generate Level 1 features
+xgb_set <- llply(data_folds,trainOneFold,L0FeatureSet2)
+
+# final model fit
+xgb_mdl <- do.call(train,
+                 c(list(x=L0FeatureSet2$train$predictors,y=L0FeatureSet2$train$y),
+                 CARET.TRAIN.PARMS,
+                 MODEL.SPECIFIC.PARMS,
+                 CARET.TRAIN.OTHER.PARMS))
+
+# CV Error Estimate
+cv_y <- do.call(c,lapply(xgb_set,function(x){x$predictions$y}))
+cv_yhat <- do.call(c,lapply(xgb_set,function(x){x$predictions$yhat}))
+rmse(cv_y,cv_yhat)
+cat("Average CV rmse:",mean(do.call(c,lapply(xgb_set,function(x){x$score}))))
+
+# create test submission.
+# A prediction is made by averaging the predictions made by using the models
+# fitted for each fold.
+
+test_xgb_yhat <- predict(xgb_mdl,newdata = L0FeatureSet2$test$predictors,type = "raw")
+xgb_submission <- cbind(Id=L0FeatureSet2$test$id,SalePrice=exp(test_xgb_yhat))
+
+write.csv(xgb_submission,file="xgb_sumbission.csv",row.names=FALSE)
+
+
+```
+
+
+### ranger Model
+Public Leader Board Score: `r filter(plb_data,Model=="rngr")$PLB_Score`
+```{r trainL0rngr,eval=TRUE}
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="ranger")   
+
+CARET.TUNE.GRID <-  expand.grid(mtry=2*as.integer(sqrt(ncol(L0FeatureSet1$train$predictors))))
+
+MODEL.SPECIFIC.PARMS <- list(verbose=0,num.trees=500) #NULL # Other model specific parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="none",
+                                 verboseIter=FALSE,
+                                 classProbs=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                           tuneGrid=CARET.TUNE.GRID,
+                           metric="RMSE")
+
+# generate Level 1 features
+rngr_set <- llply(data_folds,trainOneFold,L0FeatureSet1)
+
+# final model fit
+rngr_mdl <- do.call(train,
+                 c(list(x=L0FeatureSet1$train$predictors,y=L0FeatureSet1$train$y),
+                 CARET.TRAIN.PARMS,
+                 MODEL.SPECIFIC.PARMS,
+                 CARET.TRAIN.OTHER.PARMS))
+
+# CV Error Estimate
+cv_y <- do.call(c,lapply(rngr_set,function(x){x$predictions$y}))
+cv_yhat <- do.call(c,lapply(rngr_set,function(x){x$predictions$yhat}))
+rmse(cv_y,cv_yhat)
+cat("Average CV rmse:",mean(do.call(c,lapply(rngr_set,function(x){x$score}))))
+
+# create test submission.
+# A prediction is made by averaging the predictions made by using the models
+# fitted for each fold.
+
+test_rngr_yhat <- predict(rngr_mdl,newdata = L0FeatureSet1$test$predictors,type = "raw")
+rngr_submission <- cbind(Id=L0FeatureSet1$test$id,SalePrice=exp(test_rngr_yhat))
+
+write.csv(rngr_submission,file="rngr_sumbission.csv",row.names=FALSE)
+
+
+```
+
+## Level 1 Model Training
+
+### Create predictions For Level 1 Model
+```{r}
+gbm_yhat <- do.call(c,lapply(gbm_set,function(x){x$predictions$yhat}))
+xgb_yhat <- do.call(c,lapply(xgb_set,function(x){x$predictions$yhat}))
+rngr_yhat <- do.call(c,lapply(rngr_set,function(x){x$predictions$yhat}))
+
+# create Feature Set
+L1FeatureSet <- list()
+
+L1FeatureSet$train$id <- do.call(c,lapply(gbm_set,function(x){x$predictions$ID}))
+L1FeatureSet$train$y <- do.call(c,lapply(gbm_set,function(x){x$predictions$y}))
+predictors <- data.frame(gbm_yhat,xgb_yhat,rngr_yhat)
+predictors_rank <- t(apply(predictors,1,rank))
+colnames(predictors_rank) <- paste0("rank_",names(predictors))
+L1FeatureSet$train$predictors <- predictors #cbind(predictors,predictors_rank)
+
+L1FeatureSet$test$id <- gbm_submission[,"Id"]
+L1FeatureSet$test$predictors <- data.frame(gbm_yhat=test_gbm_yhat,
+                                      xgb_yhat=test_xgb_yhat,
+                                      rngr_yhat=test_rngr_yhat)
+```
+
+
+### Neural Net Model
+Public Leaderboard Score:  `r filter(plb_data,Model=="nnet")$PLB_Score`
+```{r trainL1nnet}
+# set caret training parameters
+CARET.TRAIN.PARMS <- list(method="nnet") 
+
+CARET.TUNE.GRID <-  NULL  # NULL provides model specific default tuning parameters
+
+# model specific training parameter
+CARET.TRAIN.CTRL <- trainControl(method="repeatedcv",
+                                 number=5,
+                                 repeats=1,
+                                 verboseIter=FALSE)
+
+CARET.TRAIN.OTHER.PARMS <- list(trControl=CARET.TRAIN.CTRL,
+                            maximize=FALSE,
+                           tuneGrid=CARET.TUNE.GRID,
+                           tuneLength=7,
+                           metric="RMSE")
+
+MODEL.SPECIFIC.PARMS <- list(verbose=FALSE,linout=TRUE,trace=FALSE) #NULL # Other model specific parameters
+
+
+# train the model
+set.seed(825)
+l1_nnet_mdl <- do.call(train,c(list(x=L1FeatureSet$train$predictors,y=L1FeatureSet$train$y),
+                            CARET.TRAIN.PARMS,
+                            MODEL.SPECIFIC.PARMS,
+                            CARET.TRAIN.OTHER.PARMS))
+
+l1_nnet_mdl
+cat("Average CV rmse:",mean(l1_nnet_mdl$resample$RMSE),"\n")
+
+test_l1_nnet_yhat <- predict(l1_nnet_mdl,newdata = L1FeatureSet$test$predictors,type = "raw")
+l1_nnet_submission <- cbind(Id=L1FeatureSet$test$id,SalePrice=exp(test_l1_nnet_yhat))
+colnames(l1_nnet_submission) <- c("Id","SalePrice")
+
+write.csv(l1_nnet_submission,file="l1_nnet_submission.csv",row.names=FALSE)
+
+
+```
